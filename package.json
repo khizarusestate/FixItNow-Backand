@@ -1,0 +1,56 @@
+{
+  "name": "fixitnow-backend",
+  "version": "1.0.0",
+  "description": "Production API for FixItNow customer, worker, booking, and admin workflows",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "check": "node --check index.js && node --check adminSchema.js && node --check customerSchema.js && node --check workerSchema.js && node --check reviewSchema.js && node --check notificationSchema.js && node --check middleware/*.js && node --check routes/*.js && node --check utils/*.js",
+    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js"
+  },
+  "keywords": [
+    "fixitnow",
+    "admin",
+    "backend",
+    "schemas",
+    "mongoose"
+  ],
+  "author": "Khizar Hayat",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-timeout": "^1.9.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "envalid": "^8.1.1",
+    "express": "^4.19.2",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^8.5.1",
+    "express-validator": "^7.2.0",
+    "handlebars": "^4.7.9",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.10.1",
+    "jsonwebtoken": "^9.0.0",
+    "mongoose": "^7.0.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^8.0.7",
+    "nodemon": "^3.1.14",
+    "socket.io": "^4.8.3",
+    "winston": "^3.19.0",
+    "xss-clean": "^0.1.4"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "mongodb-memory-server": "^10.0.0"
+  },
+  "optionalDependencies": {
+    "ioredis": "^5.10.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

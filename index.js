@@ -1,0 +1,388 @@
+import dotenv from "dotenv";
+dotenv.config();
+
+// ─── Global Error Handlers ───────────────────────────────────────────────────
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ UNCAUGHT EXCEPTION:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ UNHANDLED REJECTION:", reason);
+  process.exit(1);
+});
+
+// ─── Env ────────────────────────────────────────~─────────────────────────────
+import "./utils/env.js";
+
+// ─── Imports ────────────────────────────────────────────────────────────────
+import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import cors from "cors";
+import helmet from "helmet";
+import mongoose from "mongoose";
+import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+
+import routes from "./routes/index.js";
+import { errorHandler, notFound } from "./middleware/errorHandler.js";
+import { verifyToken } from "./utils/jwt.js";
+import logger from "./utils/logger.js";
+import {
+  authRateLimit,
+  apiRateLimit,
+  strictRateLimit,
+  sanitizeMongo,
+  sanitizeXSS,
+  requestTimeout,
+  handleTimeout,
+  securityHeaders,
+  validateContentType,
+  preventParameterPollution,
+} from "./middleware/security.js";
+
+import env from "./utils/env.js";
+import Admin from "./models/Admin.js";
+import { ensureSuperAdminFromEnv } from "./services/superAdminSeed.js";
+
+import {
+  initializeSocketIO,
+  setUserSocket,
+  removeUserSocket,
+  addAdminSocket,
+  removeAdminSocket,
+  isAdminConnected,
+  emitToAdmin,
+  emitToSuperAdmins,
+} from "./utils/socketManager.js";
+import { getAccessTokenFromRequest } from "./utils/authCookies.js";
+
+// ❌ REMOVED: Redis import
+// import { initRedis } from "./utils/cache.js";
+
+const app = express();
+
+if (env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const httpServer = createServer(app);
+
+// ─── CORS ────────────────────────────────────────────────────────────────────
+const CLIENT_ORIGINS = process.env.CLIENT_ORIGINS
+  ? process.env.CLIENT_ORIGINS.split(",").map((o) => o.trim())
+  : [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+      "http://localhost:5176",
+      "http://127.0.0.1:5173",
+      "http://127.0.0.1:5174",
+      "http://127.0.0.1:5175",
+      "http://127.0.0.1:5176",
+    ];
+
+const corsOptions = {
+  origin: CLIENT_ORIGINS,
+  credentials: true,
+};
+
+// ─── Socket.IO ───────────────────────────────────────────────────────────────
+const io = new Server(httpServer, {
+  cors: corsOptions,
+});
+
+initializeSocketIO(io);
+
+io.on("connection", (socket) => {
+  logger.info("Client connected", {
+    socketId: socket.id,
+    ip: socket.handshake.address,
+  });
+
+  socket.on("join-admin", async (tokenArg) => {
+    try {
+      const token =
+        typeof tokenArg === "string" && tokenArg
+          ? tokenArg
+          : getAccessTokenFromRequest({
+              headers: { cookie: socket.handshake.headers.cookie || "" },
+            });
+      if (!token) {
+        return socket.emit("error", { message: "Admin token required" });
+      }
+      // token may come from httpOnly cookie when client emits join-admin without body
+      const decoded = verifyToken(token);
+
+      if (decoded.role !== "admin") {
+        return socket.emit("error", { message: "Admin access required" });
+      }
+
+      const adminDoc = await Admin.findById(decoded.id).select("isActive role");
+      if (!adminDoc) {
+        return socket.emit("error", { message: "Admin account not found" });
+      }
+      if (!adminDoc.isActive) {
+        return socket.emit("error", {
+          message: "Admin account deactivated",
+          code: "ADMIN_DEACTIVATED",
+        });
+      }
+
+      const adminId = String(decoded.id);
+      const becameOnline = addAdminSocket(adminId, socket.id);
+
+      socket.join("admin-room");
+      socket.join(`admin:${adminId}`);
+
+      socket.isAdmin = true;
+      socket.adminId = adminId;
+      socket.adminPanelRole = decoded.adminRole || null;
+
+      if (decoded.adminRole === "super_admin") {
+        socket.join("super-admin-room");
+      }
+
+      if (becameOnline) {
+        emitToAdmin("admin-status-updated", {
+          adminId,
+          status: "active",
+          adminRole: decoded.adminRole || "admin",
+          timestamp: new Date().toISOString(),
+        });
+        emitToSuperAdmins("admin-status-updated", {
+          adminId,
+          status: "active",
+          adminRole: decoded.adminRole || "admin",
+          timestamp: new Date().toISOString(),
+        });
+        emitToSuperAdmins("admin-team-updated", {
+          action: "connected",
+          adminId,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      logger.info("Admin joined", { adminId });
+    } catch (err) {
+      socket.emit("error", { message: "Invalid token" });
+    }
+  });
+
+  socket.on("join-user", (data) => {
+    const userId = data?.userId;
+    const token =
+      data?.token ||
+      getAccessTokenFromRequest({
+        headers: { cookie: socket.handshake.headers.cookie || "" },
+      });
+
+    if (!token || !userId) {
+      return socket.emit("error", { message: "Token and userId required" });
+    }
+
+    try {
+      const decoded = verifyToken(token);
+
+      if (decoded.id !== userId) {
+        return socket.emit("error", { message: "User mismatch" });
+      }
+
+      setUserSocket(userId, socket.id);
+
+      socket.userId = userId;
+      socket.userRole = decoded.role;
+
+      if (decoded.role === "worker") {
+        socket.join("workers-room");
+      }
+
+      logger.info("User joined", { userId });
+    } catch {
+      socket.emit("error", { message: "Invalid token" });
+    }
+  });
+
+  socket.on("disconnect", () => {
+    if (socket.userId) {
+      removeUserSocket(socket.userId);
+    }
+
+    if (socket.isAdmin && socket.adminId) {
+      const becameOffline = removeAdminSocket(socket.adminId, socket.id);
+      if (becameOffline) {
+        emitToAdmin("admin-status-updated", {
+          adminId: socket.adminId,
+          status: "inactive",
+          adminRole: socket.adminPanelRole || "admin",
+          timestamp: new Date().toISOString(),
+        });
+        emitToSuperAdmins("admin-status-updated", {
+          adminId: socket.adminId,
+          status: "inactive",
+          adminRole: socket.adminPanelRole || "admin",
+          timestamp: new Date().toISOString(),
+        });
+        emitToSuperAdmins("admin-team-updated", {
+          action: "disconnected",
+          adminId: socket.adminId,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  });
+});
+
+// ─── App Config ──────────────────────────────────────────────────────────────
+const PORT = env.PORT || 5000;
+
+app.use(cors(corsOptions));
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
+app.use(securityHeaders);
+app.use(sanitizeMongo);
+app.use(sanitizeXSS);
+app.use(requestTimeout);
+app.use(handleTimeout);
+app.use(validateContentType);
+app.use(preventParameterPollution);
+
+// ─── Uploads ────────────────────────────────────────────────────────────────
+const uploadsDir = path.join(__dirname, "uploads");
+
+const folders = [
+  "admin-profiles",
+  "advertisements",
+  "profile-pictures",
+  "payment-receipts",
+];
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+folders.forEach((f) => {
+  const p = path.join(uploadsDir, f);
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+});
+
+app.use(
+  "/uploads",
+  cors(corsOptions),
+  (req, res, next) => {
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
+  express.static(path.join(__dirname, "uploads")),
+);
+
+// ─── Rate Limit ──────────────────────────────────────────────────────────────
+app.use("/api", apiRateLimit);
+app.use("/api/auth", authRateLimit);
+app.use("/api/admin/login", strictRateLimit);
+
+// ─── Logging ────────────────────────────────────────────────────────────────
+app.use(
+  morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
+    stream: { write: (msg) => logger.http(msg.trim()) },
+  }),
+);
+
+// ─── Body Parser ─────────────────────────────────────────────────────────────
+app.use(express.json({ limit: "1mb", strict: true }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// ─── Routes ──────────────────────────────────────────────────────────────────
+app.use("/api", routes);
+
+app.get("/health", async (req, res) => {
+  const dbOk = mongoose.connection.readyState === 1;
+  const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER);
+  res.status(dbOk ? 200 : 503).json({
+    success: dbOk,
+    message: dbOk ? "FixItNow API running" : "Database not connected",
+    uptime: process.uptime(),
+    env: env.NODE_ENV,
+    checks: {
+      database: dbOk ? "ok" : "down",
+      smtp: smtpConfigured ? "configured" : "missing",
+    },
+  });
+});
+
+// ─── Errors ──────────────────────────────────────────────────────────────────
+app.use(notFound);
+app.use(errorHandler);
+
+// ─── MongoDB Connection ──────────────────────────────────────────────────────
+async function connectDB(uri) {
+  await mongoose.connect(uri, {
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+  });
+
+  console.log("✅ MongoDB connected");
+
+  mongoose.connection.on("error", (err) =>
+    console.error("Mongo error:", err.message),
+  );
+}
+
+// ─── Start Server ────────────────────────────────────────────────────────────
+async function startServer() {
+  try {
+    console.log("🚀 Starting API...");
+    console.log("🌐 Env:", env.NODE_ENV);
+
+    if (!env.MONGODB_URI) {
+      throw new Error("MONGODB_URI missing");
+    }
+
+    await connectDB(env.MONGODB_URI);
+    await ensureSuperAdminFromEnv();
+
+    httpServer.listen(PORT, () => {
+      logger.info("Server started", {
+        port: PORT,
+        env: env.NODE_ENV,
+      });
+
+      console.log(`✅ Server running on ${PORT}`);
+    });
+  } catch (err) {
+    console.error("❌ Startup error:", err);
+    process.exit(1);
+  }
+}
+
+// ─── Shutdown ────────────────────────────────────────────────────────────────
+process.on("SIGINT", async () => {
+  await mongoose.connection.close();
+  io.close();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  await mongoose.connection.close();
+  io.close();
+  process.exit(0);
+});
+
+// ─── Run ─────────────────────────────────────────────────────────────────────
+startServer();
+
+export default app;
+export { io };

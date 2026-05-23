@@ -1,0 +1,92 @@
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        background: #f5f5f5;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+        color: #333;
+        padding: 30px 20px;
+        text-align: center;
+        border-radius: 8px 8px 0 0;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 28px;
+      }
+      .content {
+        padding: 30px 20px;
+        background: white;
+      }
+      .content p {
+        margin: 15px 0;
+        line-height: 1.6;
+        color: #333;
+      }
+      .highlight {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 15px;
+        margin: 20px 0;
+        border-radius: 4px;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 30px;
+        background: #0071e3;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+      .footer {
+        padding: 20px;
+        background: #f5f5f5;
+        text-align: center;
+        font-size: 12px;
+        color: #666;
+        border-radius: 0 0 8px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Booking Status Update</h1>
+      </div>
+      <div class="content">
+        <p>Hi {{fullName}},</p>
+        <p>Your booking for
+          <strong>{{serviceTitle}}</strong>
+          has been updated.</p>
+        <div class="highlight">
+          <strong>Status: {{status}}</strong>
+        </div>
+        <p>You can view the details and track your booking by logging into your
+          account.</p>
+        <p>
+          <a href="{{appUrl}}/my-bookings" class="button">View Your Bookings</a>
+        </p>
+        <p>If you have any questions about your booking, please contact our
+          support team.</p>
+        <p>Thank you for using Fix It Now!</p>
+        <p>Best regards,<br /><strong>The Fix It Now Team</strong></p>
+      </div>
+      <div class="footer">
+        <p>&copy; 2026 Fix It Now. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,90 @@
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        background: #f5f5f5;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: linear-gradient(135deg, #0071e3 0%, #0051ba 100%);
+        color: white;
+        padding: 30px 20px;
+        text-align: center;
+        border-radius: 8px 8px 0 0;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 28px;
+      }
+      .content {
+        padding: 30px 20px;
+        background: white;
+      }
+      .content p {
+        margin: 15px 0;
+        line-height: 1.6;
+        color: #333;
+      }
+      .highlight {
+        background: #e3f2fd;
+        border-left: 4px solid #0071e3;
+        padding: 15px;
+        margin: 20px 0;
+        border-radius: 4px;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 30px;
+        background: #0071e3;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+      .footer {
+        padding: 20px;
+        background: #f5f5f5;
+        text-align: center;
+        font-size: 12px;
+        color: #666;
+        border-radius: 0 0 8px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Application Received</h1>
+      </div>
+      <div class="content">
+        <p>Hi {{fullName}},</p>
+        <p>Thank you for applying to become a worker on Fix It Now!</p>
+        <div class="highlight">
+          <strong>Your application has been received and is under review.</strong>
+          <p style="margin-top: 10px;">We'll notify you via email once our team
+            makes a decision. This typically takes 2-3 business days.</p>
+        </div>
+        <p>In the meantime, you can log in to your account to complete your
+          profile and set up your preferences.</p>
+        <p>
+          <a href="{{appUrl}}/login" class="button">View Your Application Status</a>
+        </p>
+        <p>Thank you for your patience!</p>
+        <p>Best regards,<br /><strong>The Fix It Now Team</strong></p>
+      </div>
+      <div class="footer">
+        <p>&copy; 2026 Fix It Now. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>
