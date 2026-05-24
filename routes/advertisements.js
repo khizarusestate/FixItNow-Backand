@@ -11,10 +11,23 @@ import Worker from "../workerSchema.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { emitToAdmin, emitToUser } from "../utils/socketManager.js";
+import { notifyAllAdmins } from "../utils/createNotification.js";
 import {
   validateFile,
   generateSecureFilename,
 } from "../utils/fileValidation.js";
+
+function collectUploadedFiles(files) {
+  if (!files) return [];
+  if (Array.isArray(files)) return files;
+  return Object.values(files).flat();
+}
+
+function unlinkUploadedFiles(files) {
+  collectUploadedFiles(files).forEach((file) => {
+    if (file?.path) fs.unlink(file.path, () => {});
+  });
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -212,7 +225,7 @@ router.post(
     }
 
     if (!["image", "video"].includes(adType)) {
-      req.files.forEach((file) => fs.unlink(file.path, () => {}));
+      unlinkUploadedFiles(req.files);
       return res
         .status(400)
         .json({ success: false, message: "Ad type must be image or video." });
@@ -221,7 +234,7 @@ router.post(
     if (
       !["24 hours", "3 days", "1 week", "2 weeks", "1 month"].includes(duration)
     ) {
-      req.files.forEach((file) => fs.unlink(file.path, () => {}));
+      unlinkUploadedFiles(req.files);
       return res.status(400).json({
         success: false,
         message:
@@ -352,7 +365,7 @@ router.post(
     // Notify admin about new advertisement
     await notifyAllAdmins({
       title: "New advertisement submitted",
-      message: `New advertisement submitted by ${profileUser.fullName}`,
+      message: `New advertisement submitted by ${profileName}`,
       type: "advertisements",
       relatedEntityId: advertisement._id,
     });
