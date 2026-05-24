@@ -299,24 +299,34 @@ export function getUrgencyScore(createdAt) {
 }
 
 /**
+ * Whether a job would have been hidden under the old filter rules.
+ */
+export function wouldDemoteJob(worker, booking, options = {}) {
+  const maxRadiusKm = options.maxRadiusKm ?? DEFAULT_MAX_RADIUS_KM;
+  const service = getServiceMatchScore(worker, booking);
+  if (service.score === 0) return true;
+
+  const workerCoords = getCoords(worker);
+  const bookingCoords = getCoords(booking);
+  if (workerCoords && bookingCoords && maxRadiusKm > 0) {
+    const d = distanceKm(workerCoords, bookingCoords);
+    if (d > maxRadiusKm) return true;
+  }
+  return false;
+}
+
+/**
  * Composite rank R(j) = 0.55·L + 0.35·S + 0.10·U
+ * All jobs are scored; none are dropped.
  */
 export function calculateRankScore(worker, booking, options = {}) {
-  const maxRadiusKm = options.maxRadiusKm ?? DEFAULT_MAX_RADIUS_KM;
-
   const service = getServiceMatchScore(worker, booking);
-  if (service.score === 0) {
-    return null;
-  }
 
   const workerCoords = getCoords(worker);
   const bookingCoords = getCoords(booking);
   let dist = null;
   if (workerCoords && bookingCoords) {
     dist = distanceKm(workerCoords, bookingCoords);
-    if (maxRadiusKm > 0 && dist > maxRadiusKm) {
-      return null;
-    }
   }
 
   const location = getLocationMatchScore(worker, booking, dist);
@@ -330,10 +340,13 @@ export function calculateRankScore(worker, booking, options = {}) {
         100,
     ) / 100;
 
+  const demoted = wouldDemoteJob(worker, booking, options);
+
   return {
     rankScore,
     _matchScore: rankScore,
     _distanceKm: location.distanceKm,
+    _demoted: demoted,
     _matchMeta: {
       rankScore,
       distanceKm: location.distanceKm,
@@ -347,11 +360,16 @@ export function calculateRankScore(worker, booking, options = {}) {
       partialService: service.partialService,
       sameCity: location.sameCity,
       sameArea: location.sameArea,
+      demoted,
     },
   };
 }
 
 function compareRankedJobs(a, b) {
+  const aDemoted = Boolean(a._demoted);
+  const bDemoted = Boolean(b._demoted);
+  if (aDemoted !== bDemoted) return aDemoted ? 1 : -1;
+
   const rankDiff = (b._matchScore ?? 0) - (a._matchScore ?? 0);
   if (rankDiff !== 0) return rankDiff;
 
@@ -367,22 +385,20 @@ function compareRankedJobs(a, b) {
 }
 
 /**
- * Rank bookings for a worker (location + service + urgency).
- * Drops jobs outside max radius or with no service match.
+ * Rank all bookings for a worker (location + service + urgency).
+ * Previously filtered jobs are demoted to the end, not removed.
  */
 export function rankBookingsForWorker(worker, bookings, options = {}) {
-  const scored = [];
-
-  for (const booking of bookings) {
+  const scored = bookings.map((booking) => {
     const result = calculateRankScore(worker, booking, options);
-    if (!result) continue;
-    scored.push({
+    return {
       ...booking,
       _matchScore: result._matchScore,
       _distanceKm: result._distanceKm,
+      _demoted: result._demoted,
       _matchMeta: result._matchMeta,
-    });
-  }
+    };
+  });
 
   scored.sort(compareRankedJobs);
   return scored;
@@ -405,6 +421,7 @@ export function sanitizeBookingForWorker(booking) {
     updatedAt: booking.updatedAt,
     _matchScore: booking._matchScore,
     _distanceKm: booking._distanceKm ?? null,
+    _demoted: booking._demoted ?? false,
     _matchMeta: booking._matchMeta,
   };
 }
@@ -425,6 +442,7 @@ export function formatAvailableJobForWorker(booking, customer = null) {
     createdAt: booking.createdAt,
     _matchScore: booking._matchScore,
     _distanceKm: booking._distanceKm ?? null,
+    _demoted: booking._demoted ?? false,
     _matchMeta: booking._matchMeta,
   };
 }

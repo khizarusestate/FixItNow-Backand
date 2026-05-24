@@ -89,23 +89,29 @@ describe('jobMatching', () => {
         [farBooking, nearBooking, wrongService],
         { maxRadiusKm: 250 },
       );
-      expect(ranked.length).toBe(2);
-      expect(ranked[0]._distanceKm).toBeLessThan(ranked[1]._distanceKm);
-      expect(ranked[0]._matchScore).toBeGreaterThanOrEqual(ranked[1]._matchScore);
+      expect(ranked.length).toBe(3);
+      expect(ranked[0]._matchScore).toBeGreaterThanOrEqual(
+        ranked[ranked.length - 1]._matchScore,
+      );
+      expect(ranked[ranked.length - 1]._demoted).toBe(true);
     });
 
-    it('excludes jobs beyond max radius', () => {
+    it('demotes jobs beyond max radius instead of hiding them', () => {
       const ranked = rankBookingsForWorker(worker, [farBooking, nearBooking], {
         maxRadiusKm: 10,
       });
-      expect(ranked.length).toBe(1);
-      expect(ranked[0]._distanceKm).toBeLessThan(10);
+      expect(ranked.length).toBe(2);
+      expect(ranked[0]._demoted).toBe(false);
+      expect(ranked[1]._demoted).toBe(true);
     });
   });
 
   describe('calculateRankScore', () => {
-    it('returns null when service does not match', () => {
-      expect(calculateRankScore(worker, wrongService)).toBeNull();
+    it('still scores unrelated service jobs (demoted later in sort)', () => {
+      const result = calculateRankScore(worker, wrongService);
+      expect(result).not.toBeNull();
+      expect(result._demoted).toBe(true);
+      expect(result._matchMeta.serviceScore).toBe(0);
     });
   });
 });
