@@ -54,14 +54,12 @@ const env = cleanEnv(process.env, {
     choices: ["error", "warn", "info", "debug"],
   }),
 
-  SMTP_HOST: str({ default: "" }),
-  SMTP_PORT: port({ default: 587 }),
-  SMTP_SECURE: str({ default: "false" }),
-  SMTP_USER: str({ default: "" }),
-  SMTP_PASS: str({ default: "" }),
+  /** Resend API key — https://resend.com/api-keys (HTTP; works on Railway) */
+  RESEND_API_KEY: str({ default: "" }),
 
-  SMTP_FROM_EMAIL: str({ default: "noreply@fixitnow.com" }),
-  SMTP_FROM_NAME: str({ default: "Fix It Now" }),
+  /** Verified sender in Resend (e.g. noreply@yourdomain.com) */
+  EMAIL_FROM: str({ default: "onboarding@resend.dev" }),
+  EMAIL_FROM_NAME: str({ default: "Fix It Now" }),
 
   FRONTEND_URL: str({ default: "http://localhost:5173" }),
 });

@@ -310,7 +310,7 @@ app.use("/api", routes);
 
 app.get("/health", async (req, res) => {
   const dbOk = mongoose.connection.readyState === 1;
-  const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER);
+  const emailConfigured = Boolean(String(env.RESEND_API_KEY || "").trim());
   res.status(dbOk ? 200 : 503).json({
     success: dbOk,
     message: dbOk ? "FixItNow API running" : "Database not connected",
@@ -318,7 +318,7 @@ app.get("/health", async (req, res) => {
     env: env.NODE_ENV,
     checks: {
       database: dbOk ? "ok" : "down",
-      smtp: smtpConfigured ? "configured" : "missing",
+      email: emailConfigured ? "configured" : "missing",
     },
   });
 });
