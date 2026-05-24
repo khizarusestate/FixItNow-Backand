@@ -290,7 +290,19 @@ router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
   if (primaryServiceCategory !== undefined) updateFields.primaryServiceCategory = primaryServiceCategory;
   if (serviceCategories !== undefined) updateFields.serviceCategories = serviceCategories;
   applyLocationUpdate(updateFields, req.body);
-  if (profilePicture !== undefined) updateFields.profilePicture = profilePicture;
+  if (profilePicture !== undefined) {
+    if (
+      typeof profilePicture === "string" &&
+      profilePicture.startsWith("data:image")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Profile photos must be uploaded via POST /worker/profile-picture (file too large for JSON).",
+      });
+    }
+    updateFields.profilePicture = profilePicture;
+  }
 
   const worker = await Worker.findByIdAndUpdate(
     req.worker.id,

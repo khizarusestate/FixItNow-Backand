@@ -28,6 +28,14 @@ import {
 } from "../utils/locationFields.js";
 import { getRefreshTokenFromRequest, clearAuthCookies } from "../utils/authCookies.js";
 import { attachAuthToResponse } from "../utils/attachAuthResponse.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { validateFile } from "../utils/fileValidation.js";
+import { profilePictureUpload } from "../utils/profilePictureMulter.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
@@ -719,8 +727,19 @@ router.put(
     if (email !== undefined) updateFields.email = email;
     if (phone !== undefined) updateFields.phone = phone;
     applyLocationUpdate(updateFields, req.body);
-    if (profilePicture !== undefined)
+    if (profilePicture !== undefined) {
+      if (
+        typeof profilePicture === "string" &&
+        profilePicture.startsWith("data:image")
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Profile photos must be uploaded via POST /auth/customer/profile-picture (file too large for JSON).",
+        });
+      }
       updateFields.profilePicture = profilePicture;
+    }
 
     const customer = await Customer.findByIdAndUpdate(
       req.customer.id,
@@ -741,6 +760,55 @@ router.put(
       success: true,
       message: "Profile updated successfully.",
       data: formatCustomerData(customer),
+    });
+  }),
+);
+
+// ─── POST /api/auth/customer/profile-picture ───────────────────────────────────
+router.post(
+  "/customer/profile-picture",
+  requireCustomer,
+  profilePictureUpload.single("profilePicture"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded." });
+    }
+
+    try {
+      await validateFile(req.file.path, req.file.originalname, req.file.mimetype);
+    } catch (validationError) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        success: false,
+        message: `File validation failed: ${validationError.message}`,
+      });
+    }
+
+    const customer = await Customer.findById(req.customer.id);
+    if (!customer) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res
+        .status(404)
+        .json({ success: false, message: "Customer not found." });
+    }
+
+    if (customer.profilePicture) {
+      const oldPath = path.join(__dirname, "..", customer.profilePicture);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+
+    customer.profilePicture = `/uploads/profile-pictures/${req.file.filename}`;
+    await customer.save();
+
+    emitRefresh("customers");
+    const data = formatCustomerData(customer);
+
+    return res.json({
+      success: true,
+      message: "Profile picture uploaded successfully.",
+      data,
     });
   }),
 );
