@@ -245,10 +245,16 @@ router.post(
       email: email.toLowerCase().trim(),
       isDeleted: false,
     });
-    if (!customer || !(await customer.comparePassword(password))) {
+    if (!customer) {
+      return res.status(401).json({
+        success: false,
+        message: "No account found for this email. Please sign up first.",
+      });
+    }
+    if (!(await customer.comparePassword(password))) {
       return res
         .status(401)
-        .json({ success: false, message: "Invalid email or password." });
+        .json({ success: false, message: "Incorrect password." });
     }
 
     if (!customer.isActive) {
@@ -1032,10 +1038,16 @@ router.post(
       emailAddress: emailAddress.toLowerCase().trim(),
       isDeleted: false,
     });
-    if (!worker || !(await worker.comparePassword(password))) {
+    if (!worker) {
+      return res.status(401).json({
+        success: false,
+        message: "No account found for this email. Please sign up first.",
+      });
+    }
+    if (!(await worker.comparePassword(password))) {
       return res
         .status(401)
-        .json({ success: false, message: "Invalid email or password." });
+        .json({ success: false, message: "Incorrect password." });
     }
 
     if (!worker.isVerified && worker.status !== "active") {

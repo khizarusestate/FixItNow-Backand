@@ -82,12 +82,12 @@ const advertisementSchema = new mongoose.Schema(
     },
     submitterId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
+      default: null,
       index: true,
     },
     submitterType: {
       type: String,
-      enum: ["customer", "worker"],
+      enum: ["customer", "worker", "guest"],
       required: true,
     },
     submitterProfilePicture: {

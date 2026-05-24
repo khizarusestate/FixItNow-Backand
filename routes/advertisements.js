@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { asyncHandler } from "../middleware/errorHandler.js";
-import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, optionalAuth } from "../middleware/auth.js";
 import Advertisement from "../advertisementSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
@@ -149,7 +149,7 @@ async function checkProfileComplete(userId, userType) {
 // Submit a new advertisement (customer or worker)
 router.post(
   "/",
-  requireAuth,
+  optionalAuth,
   (req, res, next) => {
     uploadAd.fields([
       { name: "adFiles", maxCount: 3 },
@@ -177,8 +177,16 @@ router.post(
     });
   },
   asyncHandler(async (req, res) => {
-    const { purpose, adType, duration, paymentMethod, paymentReference } =
-      req.body;
+    const {
+      purpose,
+      adType,
+      duration,
+      paymentMethod,
+      paymentReference,
+      name: guestName,
+      email: guestEmail,
+      phone: guestPhone,
+    } = req.body;
     const user = req.user;
     const adFiles = req.files?.adFiles || [];
     const paymentReceiptFile = req.files?.paymentReceipt?.[0] || null;
@@ -231,15 +239,54 @@ router.post(
       });
     }
 
-    // Check profile completeness
-    const profileCheck = await checkProfileComplete(user.id, user.role);
-    if (!profileCheck.complete) {
-      [...adFiles, paymentReceiptFile].forEach((file) => {
-        if (file?.path) fs.unlink(file.path, () => {});
-      });
-      return res
-        .status(403)
-        .json({ success: false, message: profileCheck.message });
+    let submitterId = null;
+    let submitterType = "guest";
+    let profileName = "";
+    let profileEmail = "";
+    let profilePhone = "";
+    let submitterProfilePicture = null;
+
+    if (user && (user.role === "customer" || user.role === "worker")) {
+      const profileCheck = await checkProfileComplete(user.id, user.role);
+      if (!profileCheck.complete) {
+        [...adFiles, paymentReceiptFile].forEach((file) => {
+          if (file?.path) fs.unlink(file.path, () => {});
+        });
+        return res
+          .status(403)
+          .json({ success: false, message: profileCheck.message });
+      }
+      const profileUser = profileCheck.user;
+      submitterId = user.id;
+      submitterType = user.role;
+      profileName = profileUser.fullName;
+      profileEmail = profileUser.email || profileUser.emailAddress;
+      profilePhone = profileUser.phone || profileUser.phoneNumber || "";
+      submitterProfilePicture = profileUser.profilePicture || null;
+    } else {
+      profileName = String(guestName || "").trim();
+      profileEmail = String(guestEmail || "")
+        .trim()
+        .toLowerCase();
+      profilePhone = String(guestPhone || "").trim();
+      if (!profileName || profileName.length < 2) {
+        [...adFiles, paymentReceiptFile].forEach((file) => {
+          if (file?.path) fs.unlink(file.path, () => {});
+        });
+        return res.status(400).json({
+          success: false,
+          message: "Your name is required.",
+        });
+      }
+      if (!profileEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileEmail)) {
+        [...adFiles, paymentReceiptFile].forEach((file) => {
+          if (file?.path) fs.unlink(file.path, () => {});
+        });
+        return res.status(400).json({
+          success: false,
+          message: "A valid email address is required.",
+        });
+      }
     }
 
     if (!paymentMethod || !String(paymentMethod).trim()) {
@@ -269,16 +316,15 @@ router.post(
       }
     }
 
-    const profileUser = profileCheck.user;
     const fileUrls = adFiles.map(
       (file) => `/uploads/advertisements/${path.basename(file.path)}`,
     );
     const paymentReceiptUrl = `/uploads/advertisements/${path.basename(paymentReceiptFile.path)}`;
 
     const advertisement = await Advertisement.create({
-      name: profileUser.fullName,
-      email: profileUser.email || profileUser.emailAddress,
-      phone: profileUser.phone || profileUser.phoneNumber,
+      name: profileName,
+      email: profileEmail,
+      phone: profilePhone,
       purpose: purpose.trim(),
       duration,
       adType,
@@ -288,16 +334,16 @@ router.post(
       paymentReceiptUrl,
       paymentStatus: "pending",
       paymentSubmittedAt: new Date(),
-      submitterId: user.id,
-      submitterType: user.role,
-      submitterProfilePicture: profileUser.profilePicture || null,
+      submitterId,
+      submitterType,
+      submitterProfilePicture,
       status: "pending",
     });
 
     logger.info("Advertisement submitted", {
       adId: advertisement._id,
-      submitterId: user.id,
-      submitterType: user.role,
+      submitterId,
+      submitterType,
       duration,
       fileCount: fileUrls.length,
       paymentMethod: advertisement.paymentMethod,

@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { requireCustomer, requireWorker } from '../middleware/auth.js';
+import { requireCustomer, requireWorker, optionalAuth } from '../middleware/auth.js';
 import Booking from '../bookingSchema.js';
 import Customer from '../customerSchema.js';
 import Worker from '../workerSchema.js';
@@ -72,7 +72,7 @@ const emitRefresh = (type) => {
 // ─── POST /api/bookings ────────────────────────
 // Create a new booking (customer only)
 router.post('/',
-  requireCustomer,
+  optionalAuth,
   (req, res, next) => {
     paymentReceiptUpload.single('paymentReceipt')(req, res, (err) => {
       if (err instanceof multer.MulterError) {
@@ -174,10 +174,21 @@ router.post('/',
         });
       }
 
-      // Fetch customer
-      const customer = await Customer.findOne({ _id: req.customer.id, isDeleted: false });
-      if (!customer) {
-        return res.status(404).json({ success: false, message: 'Customer not found.' });
+      const isGuest = !req.customer;
+      let customer = null;
+
+      if (isGuest) {
+        if (!name || String(name).trim().length < 2) {
+          return res.status(400).json({
+            success: false,
+            message: 'Your full name is required.',
+          });
+        }
+      } else {
+        customer = await Customer.findOne({ _id: req.customer.id, isDeleted: false });
+        if (!customer) {
+          return res.status(404).json({ success: false, message: 'Customer not found.' });
+        }
       }
 
       // Fetch service details
@@ -213,10 +224,11 @@ router.post('/',
       }
 
       const booking = await Booking.create({
-        customerId: req.customer.id,
-        customerName: name || customer.fullName,
-        phone: phone || customer.phone,
-        email: email || customer.email,
+        customerId: customer?._id || null,
+        isGuest,
+        customerName: name || customer?.fullName,
+        phone: phone || customer?.phone,
+        email: email || customer?.email,
         serviceTitle,
         category: category || '',
         serviceCategory: serviceCategory,
@@ -241,25 +253,32 @@ router.post('/',
         }
       });
 
-      // Update customer stats
-      await Customer.findByIdAndUpdate(req.customer.id, {
-        $inc: { totalBookings: 1, pendingBookings: 1 },
-        lastBooking: new Date()
-      });
+      if (customer) {
+        await Customer.findByIdAndUpdate(customer._id, {
+          $inc: { totalBookings: 1, pendingBookings: 1 },
+          lastBooking: new Date(),
+        });
 
-      // Notify admin of new booking
+        emailService.sendBookingReceived(customer, booking).catch(() => {});
+
+        createNotification({
+          userId: customer._id,
+          userRole: 'customer',
+          title: 'Booking submitted',
+          message: `We received your request for ${booking.serviceTitle}. Pending admin review.`,
+          type: 'info',
+        }).catch(() => {});
+      } else {
+        emailService
+          .sendBookingReceived(
+            { fullName: booking.customerName, email: booking.email },
+            booking,
+          )
+          .catch(() => {});
+      }
+
       emitNotification('bookings', 'created', `New booking: ${booking.serviceTitle} by ${booking.customerName}`);
       emitRefresh('bookings');
-
-      emailService.sendBookingReceived(customer, booking).catch(() => {});
-
-      createNotification({
-        userId: req.customer.id,
-        userRole: 'customer',
-        title: 'Booking submitted',
-        message: `We received your request for ${booking.serviceTitle}. Pending admin review.`,
-        type: 'info',
-      }).catch(() => {});
 
       notifyAllAdmins({
         title: 'New booking',

@@ -6,7 +6,11 @@ const bookingSchema = new mongoose.Schema(
     customerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Customer',
-      required: true
+      default: null,
+    },
+    isGuest: {
+      type: Boolean,
+      default: false,
     },
     customerName: {
       type: String,
