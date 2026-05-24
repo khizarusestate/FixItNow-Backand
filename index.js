@@ -65,7 +65,19 @@ import { getAccessTokenFromRequest } from "./utils/authCookies.js";
 
 const app = express();
 
-if (env.NODE_ENV === "production") {
+/** Railway/Vercel/Render sit behind a reverse proxy — required for rate-limit + secure cookies. */
+const behindReverseProxy =
+  env.NODE_ENV === "production" ||
+  process.env.TRUST_PROXY === "1" ||
+  process.env.TRUST_PROXY === "true" ||
+  Boolean(
+    process.env.RAILWAY_ENVIRONMENT ||
+      process.env.RAILWAY_SERVICE_NAME ||
+      process.env.RENDER ||
+      process.env.FLY_APP_NAME,
+  );
+
+if (behindReverseProxy) {
   app.set("trust proxy", 1);
 }
 

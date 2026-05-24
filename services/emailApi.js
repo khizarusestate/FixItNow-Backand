@@ -73,6 +73,22 @@ export async function sendEmail({ to, subject, html }) {
 /** Log configuration status once on startup. */
 export function logEmailServiceStatus() {
   if (isEmailConfigured()) {
+    const fromEmail = env.EMAIL_FROM || "";
+    if (
+      fromEmail &&
+      !fromEmail.endsWith("@resend.dev") &&
+      (fromEmail.includes("@gmail.") ||
+        fromEmail.includes("@yahoo.") ||
+        fromEmail.includes("@hotmail."))
+    ) {
+      logger.warn(
+        "EMAIL_FROM looks like a personal inbox — Resend requires a verified domain or onboarding@resend.dev",
+        { from: getFromAddress() },
+      );
+      console.warn(
+        "EMAIL_FROM should be onboarding@resend.dev (test) or noreply@your-verified-domain.com — not Gmail.",
+      );
+    }
     logger.info("Email service ready (Resend API)", {
       from: getFromAddress(),
     });
