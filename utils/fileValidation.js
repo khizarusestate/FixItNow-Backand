@@ -45,6 +45,7 @@ const ALLOWED_EXTENSIONS = new Set([
   ".bmp",
   ".mp4",
   ".webm",
+  ".mov",
   ".pdf",
 ]);
 
@@ -88,14 +89,13 @@ const readMagicBytes = (filePath, byteCount = 12) => {
  * Validate magic bytes against expected MIME type
  */
 export const validateMagicBytes = (filePath, mimeType) => {
-  // Skip magic byte validation for SVG (text-based)
-  if (mimeType === "image/svg+xml") {
+  // Skip magic byte validation for SVG (text-based) and MOV/quicktime variants
+  if (mimeType === "image/svg+xml" || mimeType === "video/quicktime") {
     return true;
   }
 
   const expectedBytes = MAGIC_BYTES[mimeType];
   if (!expectedBytes) {
-    // If we don't have magic bytes for this type, skip validation
     return true;
   }
 
@@ -137,6 +137,7 @@ export const validateFile = async (filePath, filename, mimeType) => {
     ".bmp": "image/bmp",
     ".mp4": "video/mp4",
     ".webm": "video/webm",
+    ".mov": "video/quicktime",
     ".pdf": "application/pdf",
   };
 

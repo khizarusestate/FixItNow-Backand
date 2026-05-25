@@ -114,6 +114,9 @@ const router = express.Router();
 
 // ─── Helper: Check if user profile is complete ───────────────────────────────
 async function checkProfileComplete(userId, userType) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return { complete: false, message: "Invalid user session. Please login again." };
+  }
   if (userType === "customer") {
     const customer = await Customer.findById(userId).lean();
     if (!customer) return { complete: false, message: "Customer not found." };
@@ -378,18 +381,22 @@ router.post(
       paymentMethod: advertisement.paymentMethod,
     });
 
-    // Notify admin about new advertisement
-    await notifyAllAdmins({
-      title: "New advertisement submitted",
-      message: `New advertisement submitted by ${profileName}`,
-      type: "advertisements",
-      relatedEntityId: advertisement._id,
-    });
-
-    emitToAdmin("refresh", {
-      type: "advertisements",
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      await notifyAllAdmins({
+        title: "New advertisement submitted",
+        message: `New advertisement submitted by ${profileName}`,
+        type: "info",
+        relatedEntityId: advertisement._id,
+      });
+      emitToAdmin("refresh", {
+        type: "advertisements",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (notifyErr) {
+      logger.warn("Advertisement notify failed (submission still saved)", {
+        error: notifyErr?.message,
+      });
+    }
 
     return res.status(201).json({
       success: true,
