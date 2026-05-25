@@ -112,6 +112,24 @@ const bookingSchema = new mongoose.Schema(
       max: 5,
       default: null
     },
+    /** Customer tapped Done + rating (orange tick in admin) */
+    customerMarkedDone: {
+      type: Boolean,
+      default: false,
+    },
+    customerMarkedDoneAt: {
+      type: Date,
+      default: null,
+    },
+    /** Worker tapped Done on their side (blue tick in admin) */
+    workerMarkedDone: {
+      type: Boolean,
+      default: false,
+    },
+    workerMarkedDoneAt: {
+      type: Date,
+      default: null,
+    },
     isDeleted: {
       type: Boolean,
       default: false

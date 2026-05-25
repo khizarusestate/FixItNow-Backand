@@ -4,7 +4,7 @@ import { requireWorker } from "../middleware/auth.js";
 import Booking from "../bookingSchema.js";
 import Worker from "../workerSchema.js";
 import mongoose from "mongoose";
-import { emitToAdmin } from "../utils/socketManager.js";
+import { emitToAdmin, emitToUser } from "../utils/socketManager.js";
 import logger from "../utils/logger.js";
 import {
   rankBookingsForWorker,
@@ -15,6 +15,7 @@ import {
   BOOKING_ACTION,
   rejectBookingAction,
 } from "../utils/bookingActions.js";
+import { finalizeBookingCompletion } from "../utils/bookingCompletion.js";
 
 const router = express.Router();
 
@@ -264,23 +265,135 @@ router.get(
         status: booking.status,
         assignedAt: booking.assignedAt,
         createdAt: booking.createdAt,
+        customerMarkedDone: Boolean(booking.customerMarkedDone),
+        workerMarkedDone: Boolean(booking.workerMarkedDone),
+        customerRating: booking.customerRating,
       })),
     });
   }),
 );
 
-// ─── POST /api/worker-jobs/complete ───────────────────────────────────────────────
-// DEPRECATED: Workers cannot mark jobs as complete.
-// Only customers can mark jobs as complete with rating via /api/bookings/:id/complete
-// This endpoint is removed to prevent bypassing the rating system.
+// ─── POST /api/worker-jobs/:id/mark-done ─────────────────────────────────────────
+// Worker marks done (blue tick). Finalizes when customer already marked done + rated.
 router.post(
-  "/complete",
+  "/:id/mark-done",
   requireWorker,
   asyncHandler(async (req, res) => {
-    return res.status(403).json({
-      success: false,
-      message:
-        "Workers cannot mark jobs as complete. Only customers can mark jobs as complete with rating.",
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid booking ID.",
+      });
+    }
+
+    const booking = await Booking.findOne({
+      _id: req.params.id,
+      workerId: req.worker.id,
+      isDeleted: false,
+    }).populate("customerId", "fullName email");
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found or not assigned to you.",
+      });
+    }
+
+    if (rejectBookingAction(res, booking, BOOKING_ACTION.WORKER_MARK_DONE)) {
+      return;
+    }
+
+    const worker = await Worker.findById(req.worker.id);
+    if (!worker) {
+      return res.status(404).json({ success: false, message: "Worker not found." });
+    }
+
+    booking.workerMarkedDone = true;
+    booking.workerMarkedDoneAt = new Date();
+    booking.timeline.push({
+      status: booking.status,
+      timestamp: new Date(),
+      note: `Worker marked job as done (awaiting customer confirmation if needed).`,
+    });
+
+    let finalized = false;
+    let serviceFee = 0;
+    let workerEarnings = 0;
+    let newRating = worker.rating || 0;
+
+    if (booking.customerMarkedDone && booking.customerRating) {
+      const result = await finalizeBookingCompletion(
+        booking,
+        worker,
+        booking.customerId?._id || booking.customerId,
+      );
+      serviceFee = result.serviceFee;
+      workerEarnings = result.workerEarnings;
+      newRating = result.newRating;
+      finalized = true;
+    } else if (booking.customerMarkedDone && !booking.customerRating) {
+      await booking.save();
+      return res.status(400).json({
+        success: false,
+        message:
+          "Customer marked done but has not submitted a rating yet. Ask them to rate the job in My Bookings.",
+      });
+    } else {
+      if (booking.status === "assigned") {
+        booking.status = "in-progress";
+      }
+      await booking.save();
+    }
+
+    emitToAdmin("refresh", {
+      type: "bookings",
+      timestamp: new Date().toISOString(),
+    });
+
+    const customerId =
+      booking.customerId?._id?.toString() || String(booking.customerId || "");
+
+    if (finalized) {
+      emitToUser(customerId, "booking-status-update", {
+        bookingId: booking._id,
+        serviceTitle: booking.serviceTitle,
+        status: "completed",
+        customerMarkedDone: true,
+        workerMarkedDone: true,
+        message: `Your ${booking.serviceTitle} booking is fully completed.`,
+      });
+      emitToUser(req.worker.id, "job-completed", {
+        bookingId: booking._id,
+        serviceTitle: booking.serviceTitle,
+        workerEarnings,
+        message: `Job "${booking.serviceTitle}" is fully completed.`,
+      });
+    } else {
+      if (customerId) {
+        emitToUser(customerId, "booking-status-update", {
+          bookingId: booking._id,
+          serviceTitle: booking.serviceTitle,
+          status: booking.status,
+          workerMarkedDone: true,
+          customerMarkedDone: false,
+          message: `The worker marked "${booking.serviceTitle}" as done. Please rate and confirm in My Bookings.`,
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: finalized
+        ? "Job fully completed."
+        : "Marked as done on your side. Waiting for the customer to rate and confirm.",
+      data: {
+        bookingId: booking._id,
+        status: booking.status,
+        customerMarkedDone: Boolean(booking.customerMarkedDone),
+        workerMarkedDone: true,
+        finalized,
+        workerEarnings: finalized ? workerEarnings : undefined,
+      },
     });
   }),
 );

@@ -15,6 +15,7 @@ import {
   BOOKING_ACTION,
   rejectBookingAction,
 } from '../utils/bookingActions.js';
+import { finalizeBookingCompletion } from '../utils/bookingCompletion.js';
 import { body, validationResult } from 'express-validator';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
 import emailService from '../services/emailService.js';
@@ -364,6 +365,11 @@ router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
             totalAmount: b.paymentDetails.totalAmount,
           }
         : null,
+      customerRating: b.customerRating,
+      customerMarkedDone: Boolean(b.customerMarkedDone),
+      customerMarkedDoneAt: b.customerMarkedDoneAt,
+      workerMarkedDone: Boolean(b.workerMarkedDone),
+      workerMarkedDoneAt: b.workerMarkedDoneAt,
       worker: b.workerId ? {
         id: b.workerId._id,
         fullName: b.workerId.fullName,
@@ -440,8 +446,7 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
 }));
 
 // ─── POST /api/bookings/:id/complete ───────────────────────────────────────────
-// Customer marks an assigned booking as completed (Done) with rating
-// Only customer can complete a booking, worker cannot use this endpoint
+// Customer marks done + rating (orange tick). Finalizes when worker also marked done.
 router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return sendApiError(res, ERROR_CODES.VALIDATION_FAILED, {
@@ -486,134 +491,105 @@ router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
     });
   }
 
-  // Calculate earnings (15% platform commission)
-  const serviceFee = Math.round(booking.price * 0.15);
-  const workerEarnings = booking.price - serviceFee;
+  booking.customerMarkedDone = true;
+  booking.customerMarkedDoneAt = new Date();
+  booking.customerRating = rating;
+  booking.timeline.push({
+    status: booking.status,
+    timestamp: new Date(),
+    note: `Customer marked job as done with ${rating} stars (awaiting worker confirmation).`,
+  });
 
-  // Calculate new worker rating
-  const currentTotalRating = (worker.rating || 0) * (worker.totalReviews || 0);
-  const newTotalReviews = (worker.totalReviews || 0) + 1;
-  const newRating = (currentTotalRating + rating) / newTotalReviews;
+  let serviceFee = 0;
+  let workerEarnings = 0;
+  let newRating = worker.rating || 0;
+  let finalized = false;
 
-  // Use MongoDB transaction for atomicity (if replica set is configured)
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => {
-      // Update booking to completed with rating
-      booking.status = 'completed';
-      booking.completedAt = new Date();
-      booking.paymentDetails = {
-        totalAmount: booking.price,
-        serviceFee,
-        workerEarnings,
-        platformCommission: serviceFee,
-        processedAt: new Date()
-      };
-      booking.customerRating = rating;
-      booking.timeline.push({
-        status: 'completed',
-        timestamp: new Date(),
-        note: `Customer marked job as done with ${rating} stars. Worker: ${worker.fullName}. Service fee (15%): ₨${serviceFee}. Worker earnings: ₨${workerEarnings}`
-      });
-      await booking.save({ session });
-
-      // Update worker stats, earnings, and rating
-      await Worker.findByIdAndUpdate(worker._id, {
-        status: 'active',
-        $inc: {
-          completedJobs: 1,
-          totalEarnings: workerEarnings,
-          totalReviews: 1,
-          activeJobs: -1
-        },
-        rating: newRating,
-        lastActive: new Date()
-      }, { session });
-
-      // Update customer stats
-      await Customer.findByIdAndUpdate(req.customer.id, {
-        $inc: { completedBookings: 1, pendingBookings: -1 }
-      }, { session });
-    });
-  } catch (transactionError) {
-    // If transaction fails (e.g., no replica set), fall back to non-transactional updates
-    logger.warn('Transaction failed, falling back to non-transactional updates', { error: transactionError.message });
-    
-    // Update booking to completed with rating
-    booking.status = 'completed';
-    booking.completedAt = new Date();
-    booking.paymentDetails = {
-      totalAmount: booking.price,
-      serviceFee,
-      workerEarnings,
-      platformCommission: serviceFee,
-      processedAt: new Date()
-    };
-    booking.customerRating = rating;
-    booking.timeline.push({
-      status: 'completed',
-      timestamp: new Date(),
-      note: `Customer marked job as done with ${rating} stars. Worker: ${worker.fullName}. Service fee (15%): ₨${serviceFee}. Worker earnings: ₨${workerEarnings}`
-    });
+  if (booking.workerMarkedDone) {
+    const result = await finalizeBookingCompletion(
+      booking,
+      worker,
+      req.customer.id,
+    );
+    serviceFee = result.serviceFee;
+    workerEarnings = result.workerEarnings;
+    newRating = result.newRating;
+    finalized = true;
+  } else {
+    if (booking.status === 'assigned') {
+      booking.status = 'in-progress';
+    }
     await booking.save();
-
-    // Update worker stats, earnings, and rating
-    await Worker.findByIdAndUpdate(worker._id, {
-      status: 'active',
-      $inc: {
-        completedJobs: 1,
-        totalEarnings: workerEarnings,
-        totalReviews: 1,
-        activeJobs: -1
-      },
-      rating: newRating,
-      lastActive: new Date()
-    });
-
-    // Update customer stats
-    await Customer.findByIdAndUpdate(req.customer.id, {
-      $inc: { completedBookings: 1, pendingBookings: -1 }
-    });
-  } finally {
-    await session.endSession();
   }
 
-  // Notify admin
-  emitNotification('bookings', 'completed', `Job completed: ${booking.serviceTitle} by ${worker.fullName}. Rating: ${rating} stars. Commission: ₨${serviceFee}`);
   emitRefresh('bookings');
-  emitRefresh('revenue');
 
-  // Real-time: notify worker with rating
-  emitToUser(worker._id.toString(), 'job-completed', {
-    bookingId: booking._id,
-    serviceTitle: booking.serviceTitle,
-    workerEarnings,
-    totalEarnings: (worker.totalEarnings || 0) + workerEarnings,
-    rating,
-    newRating: newRating.toFixed(1),
-    message: `Job "${booking.serviceTitle}" marked as done by customer with ${rating} stars. You earned ₨${workerEarnings}`
-  });
-
-  // Real-time: notify customer
-  emitToUser(String(req.customer.id), 'booking-status-update', {
-    bookingId: booking._id,
-    serviceTitle: booking.serviceTitle,
-    status: 'completed',
-    rating,
-    message: `Your ${booking.serviceTitle} service has been marked as completed with ${rating} stars.`
-  });
+  if (finalized) {
+    emitNotification(
+      'bookings',
+      'completed',
+      `Job completed: ${booking.serviceTitle} by ${worker.fullName}. Rating: ${rating} stars. Commission: ₨${serviceFee}`,
+    );
+    emitRefresh('revenue');
+    emitToUser(worker._id.toString(), 'job-completed', {
+      bookingId: booking._id,
+      serviceTitle: booking.serviceTitle,
+      workerEarnings,
+      rating,
+      newRating: Number(newRating).toFixed(1),
+      message: `Job "${booking.serviceTitle}" is fully completed. Customer rated ${rating} stars.`,
+    });
+    emitToUser(String(req.customer.id), 'booking-status-update', {
+      bookingId: booking._id,
+      serviceTitle: booking.serviceTitle,
+      status: 'completed',
+      rating,
+      customerMarkedDone: true,
+      workerMarkedDone: true,
+      message: `Your ${booking.serviceTitle} service is fully completed.`,
+    });
+  } else {
+    emitNotification(
+      'bookings',
+      'updated',
+      `Customer marked ${booking.serviceTitle} as done (${rating}★). Waiting for worker.`,
+    );
+    emitToUser(worker._id.toString(), 'booking-status-update', {
+      bookingId: booking._id,
+      serviceTitle: booking.serviceTitle,
+      status: booking.status,
+      customerMarkedDone: true,
+      workerMarkedDone: false,
+      rating,
+      message: `Customer marked "${booking.serviceTitle}" as done. Please confirm from your dashboard.`,
+    });
+    emitToUser(String(req.customer.id), 'booking-status-update', {
+      bookingId: booking._id,
+      serviceTitle: booking.serviceTitle,
+      status: booking.status,
+      customerMarkedDone: true,
+      workerMarkedDone: false,
+      rating,
+      message: `Thanks! We notified the worker to confirm completion of ${booking.serviceTitle}.`,
+    });
+  }
 
   return res.json({
     success: true,
-    message: 'Booking marked as completed successfully!',
+    message: finalized
+      ? 'Booking completed successfully!'
+      : 'Marked as done on your side. Waiting for the worker to confirm.',
     data: {
       bookingId: booking._id,
-      status: 'completed',
-      workerEarnings,
-      serviceFee,
+      status: booking.status,
+      customerMarkedDone: true,
+      workerMarkedDone: Boolean(booking.workerMarkedDone),
+      finalized,
+      workerEarnings: finalized ? workerEarnings : undefined,
+      serviceFee: finalized ? serviceFee : undefined,
       rating,
-      newWorkerRating: newRating.toFixed(1)
-    }
+      newWorkerRating: finalized ? Number(newRating).toFixed(1) : undefined,
+    },
   });
 }));
 

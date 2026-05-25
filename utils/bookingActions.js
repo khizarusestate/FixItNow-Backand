@@ -7,6 +7,7 @@ import {
 export const BOOKING_ACTION = {
   CUSTOMER_CANCEL: "customer_cancel",
   CUSTOMER_COMPLETE: "customer_complete",
+  WORKER_MARK_DONE: "worker_mark_done",
   WORKER_CLAIM: "worker_claim",
   WORKER_ACCEPT: "worker_accept",
   WORKER_UPDATE_STATUS: "worker_update_status",
@@ -48,7 +49,9 @@ export function getBookingActionBlock(booking, action, context = {}) {
     case BOOKING_ACTION.CUSTOMER_CANCEL:
       return getCustomerCancelBlock(status, serviceTitle);
     case BOOKING_ACTION.CUSTOMER_COMPLETE:
-      return getCustomerCompleteBlock(status, serviceTitle);
+      return getCustomerCompleteBlock(booking, serviceTitle);
+    case BOOKING_ACTION.WORKER_MARK_DONE:
+      return getWorkerMarkDoneBlock(booking, serviceTitle);
     case BOOKING_ACTION.WORKER_CLAIM:
     case BOOKING_ACTION.WORKER_ACCEPT:
       return getWorkerClaimBlock(status, serviceTitle, context);
@@ -110,8 +113,16 @@ function getCustomerCancelBlock(status, serviceTitle) {
   );
 }
 
-function getCustomerCompleteBlock(status, serviceTitle) {
-  if (["assigned", "approved", "in-progress"].includes(status)) return null;
+function getCustomerCompleteBlock(booking, serviceTitle) {
+  const status = booking.status;
+  if (booking.customerMarkedDone) {
+    return blockPayload({
+      code: ERROR_CODES.BOOKING_ALREADY_COMPLETED,
+      message: `You already marked ${serviceTitle} as done. Waiting for the worker to confirm.`,
+      status: 409,
+    });
+  }
+  if (["assigned", "in-progress"].includes(status)) return null;
 
   const blocks = {
     pending: blockPayload({
@@ -141,6 +152,62 @@ function getCustomerCompleteBlock(status, serviceTitle) {
     blockPayload({
       code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
       message: `Cannot mark ${serviceTitle} as done while it is ${humanizeBookingStatus(status)}. Please refresh your bookings.`,
+      status: 400,
+    })
+  );
+}
+
+function getWorkerMarkDoneBlock(booking, serviceTitle) {
+  const status = booking.status;
+  if (!booking.workerId) {
+    return blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+      message: `You are not assigned to ${serviceTitle}.`,
+      status: 400,
+    });
+  }
+  if (booking.workerMarkedDone) {
+    return blockPayload({
+      code: ERROR_CODES.BOOKING_ALREADY_COMPLETED,
+      message: `You already marked ${serviceTitle} as done on your side.`,
+      status: 409,
+    });
+  }
+  if (["assigned", "in-progress"].includes(status)) return null;
+
+  const blocks = {
+    pending: blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+      message: `${serviceTitle} is not active yet.`,
+      status: 400,
+    }),
+    approved: blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+      message: `Claim ${serviceTitle} before marking it done.`,
+      status: 400,
+    }),
+    completed: blockPayload({
+      code: ERROR_CODES.BOOKING_ALREADY_COMPLETED,
+      message: `${serviceTitle} is already fully completed.`,
+      status: 409,
+    }),
+    rejected: blockPayload({
+      code: ERROR_CODES.BOOKING_ALREADY_REJECTED,
+      message: `${serviceTitle} was rejected.`,
+      status: 409,
+    }),
+    cancelled: blockPayload({
+      code: ERROR_CODES.BOOKING_ALREADY_CANCELLED,
+      message: `${serviceTitle} was cancelled.`,
+      status: 409,
+    }),
+  };
+
+  return (
+    blocks[status] ||
+    blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+      message: `Cannot mark ${serviceTitle} as done while it is ${humanizeBookingStatus(status)}.`,
       status: 400,
     })
   );
