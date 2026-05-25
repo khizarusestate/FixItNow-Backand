@@ -267,8 +267,10 @@ router.post(
     if (!customer.isVerified || customer.status === "pending-verification") {
       return res.status(403).json({
         success: false,
+        code: "EMAIL_NOT_VERIFIED",
         message:
           "Please verify your email before logging in. Check your inbox for the 6-digit code.",
+        email: customer.email,
       });
     }
 
