@@ -19,6 +19,12 @@ import { body, validationResult } from 'express-validator';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
 import emailService from '../services/emailService.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
+import {
+  parsePayAfterWork,
+  validatePaymentSelection,
+  paymentReceiptRequired,
+  buildPayToSummaryServer,
+} from '../utils/paymentMethods.js';
 
 const router = express.Router();
 
@@ -99,17 +105,36 @@ router.post('/',
   },
   asyncHandler(async (req, res) => {
     try {
-      const { serviceTitle, serviceId, category, address, location, phone, email, notes, name, latitude, longitude, placeId, paymentMethod, payToSummary } = req.body;
+      const { serviceTitle, serviceId, category, address, location, phone, email, notes, name, latitude, longitude, placeId, paymentMethod, payToSummary, payAfterWork } = req.body;
       const bookingLocation = (location || address || '').trim();
       const paymentReceiptPath = req.file ? req.file.path : null;
       const paymentReceiptFilename = req.file ? path.basename(req.file.path) : null;
+      const payLater = parsePayAfterWork(payAfterWork);
 
-
-      // Validate payment receipt
-      if (!paymentReceiptPath) {
+      const paymentCheck = validatePaymentSelection({
+        payAfterWork: payLater,
+        paymentMethod,
+      });
+      if (!paymentCheck.ok) {
+        if (paymentReceiptPath && fs.existsSync(paymentReceiptPath)) {
+          fs.unlinkSync(paymentReceiptPath);
+        }
         return res.status(400).json({
           success: false,
-          message: 'Payment receipt is required'
+          message: paymentCheck.message,
+        });
+      }
+
+      if (
+        paymentReceiptRequired({
+          payAfterWork: payLater,
+          paymentMethod: paymentCheck.method,
+        }) &&
+        !paymentReceiptPath
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment receipt is required for EasyPaisa and JazzCash.',
         });
       }
 
@@ -165,14 +190,7 @@ router.post('/',
         });
       }
 
-      const allowedPaymentMethods = ['easypaisa', 'jazzcash', 'debit-card', 'credit-card'];
-      const pm = String(paymentMethod || '').trim().toLowerCase();
-      if (!pm || !allowedPaymentMethods.includes(pm)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Please select how you paid (EasyPaisa, JazzCash, Debit Card, or Credit Card).'
-        });
-      }
+      const pm = paymentCheck.method;
 
       const isGuest = !req.customer;
       let customer = null;
@@ -247,9 +265,14 @@ router.post('/',
           totalAmount: servicePrice,
           platformCommission: 0,
           processedAt: new Date(),
-          paymentReceipt: paymentReceiptFilename,
+          paymentReceipt: paymentReceiptFilename || '',
           paymentMethod: pm,
-          payToSummary: String(payToSummary || '').trim().slice(0, 500),
+          payAfterWork: payLater,
+          payToSummary: String(
+            payToSummary || buildPayToSummaryServer(pm),
+          )
+            .trim()
+            .slice(0, 500),
         }
       });
 

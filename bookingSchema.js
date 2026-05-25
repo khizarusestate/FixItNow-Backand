@@ -95,8 +95,10 @@ const bookingSchema = new mongoose.Schema(
       platformCommission: { type: Number, default: 0 },
       processedAt: { type: Date, default: null },
       paymentReceipt: { type: String, default: '' },
-      /** easypaisa | jazzcash | debit-card | credit-card */
+      /** easypaisa | jazzcash | hand-to-hand | pay-after-work */
       paymentMethod: { type: String, default: '', trim: true },
+      /** Customer will pay after the job is completed */
+      payAfterWork: { type: Boolean, default: false },
       /** Snapshot of pay-to instructions shown to the customer */
       payToSummary: { type: String, default: '', trim: true },
     },

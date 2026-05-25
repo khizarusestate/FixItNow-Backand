@@ -49,6 +49,10 @@ const advertisementSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    payAfterWork: {
+      type: Boolean,
+      default: false,
+    },
     paymentReference: {
       type: String,
       trim: true,

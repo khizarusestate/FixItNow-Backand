@@ -13,6 +13,12 @@ import logger from "../utils/logger.js";
 import { emitToAdmin, emitToUser } from "../utils/socketManager.js";
 import { notifyAllAdmins } from "../utils/createNotification.js";
 import {
+  parsePayAfterWork,
+  validatePaymentSelection,
+  paymentReceiptRequired,
+  buildPayToSummaryServer,
+} from "../utils/paymentMethods.js";
+import {
   validateFile,
   generateSecureFilename,
 } from "../utils/fileValidation.js";
@@ -196,6 +202,7 @@ router.post(
       duration,
       paymentMethod,
       paymentReference,
+      payAfterWork,
       name: guestName,
       email: guestEmail,
       phone: guestPhone,
@@ -203,24 +210,40 @@ router.post(
     const user = req.user;
     const adFiles = req.files?.adFiles || [];
     const paymentReceiptFile = req.files?.paymentReceipt?.[0] || null;
+    const payLater = parsePayAfterWork(payAfterWork);
 
-    if (
-      !purpose ||
-      !adType ||
-      !duration ||
-      adFiles.length === 0 ||
-      !paymentReceiptFile
-    ) {
-      if (adFiles.length > 0) {
-        adFiles.forEach((file) => fs.unlink(file.path, () => {}));
-      }
-      if (paymentReceiptFile) {
-        fs.unlink(paymentReceiptFile.path, () => {});
-      }
+    if (!purpose || !adType || !duration || adFiles.length === 0) {
+      unlinkUploadedFiles(req.files);
       return res.status(400).json({
         success: false,
         message:
-          "Purpose, ad type, duration, at least one ad file, and a payment receipt are required.",
+          "Purpose, ad type, duration, and at least one ad file are required.",
+      });
+    }
+
+    const paymentCheck = validatePaymentSelection({
+      payAfterWork: payLater,
+      paymentMethod,
+    });
+    if (!paymentCheck.ok) {
+      unlinkUploadedFiles(req.files);
+      return res.status(400).json({
+        success: false,
+        message: paymentCheck.message,
+      });
+    }
+
+    if (
+      paymentReceiptRequired({
+        payAfterWork: payLater,
+        paymentMethod: paymentCheck.method,
+      }) &&
+      !paymentReceiptFile
+    ) {
+      unlinkUploadedFiles(req.files);
+      return res.status(400).json({
+        success: false,
+        message: "Payment receipt is required for EasyPaisa and JazzCash.",
       });
     }
 
@@ -302,26 +325,16 @@ router.post(
       }
     }
 
-    if (!paymentMethod || !String(paymentMethod).trim()) {
-      [...adFiles, paymentReceiptFile].forEach((file) => {
-        if (file?.path) fs.unlink(file.path, () => {});
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Please select a payment method for your advertisement.",
-      });
-    }
+    const pm = paymentCheck.method;
 
     // Perform comprehensive file validation on all uploaded files
-    for (const file of [...adFiles, paymentReceiptFile]) {
+    const filesToValidate = [...adFiles];
+    if (paymentReceiptFile) filesToValidate.push(paymentReceiptFile);
+    for (const file of filesToValidate) {
       try {
         await validateFile(file.path, file.originalname, file.mimetype);
       } catch (validationError) {
-        [...adFiles, paymentReceiptFile].forEach((f) => {
-          if (f?.path && fs.existsSync(f.path)) {
-            fs.unlinkSync(f.path);
-          }
-        });
+        unlinkUploadedFiles(req.files);
         return res.status(400).json({
           success: false,
           message: `File validation failed for ${file.originalname}: ${validationError.message}`,
@@ -332,7 +345,9 @@ router.post(
     const fileUrls = adFiles.map(
       (file) => `/uploads/advertisements/${path.basename(file.path)}`,
     );
-    const paymentReceiptUrl = `/uploads/advertisements/${path.basename(paymentReceiptFile.path)}`;
+    const paymentReceiptUrl = paymentReceiptFile
+      ? `/uploads/advertisements/${path.basename(paymentReceiptFile.path)}`
+      : "";
 
     const advertisement = await Advertisement.create({
       name: profileName,
@@ -342,7 +357,8 @@ router.post(
       duration,
       adType,
       adFileUrls: fileUrls,
-      paymentMethod: String(paymentMethod).trim(),
+      paymentMethod: pm,
+      payAfterWork: payLater,
       paymentReference: String(paymentReference || "").trim(),
       paymentReceiptUrl,
       paymentStatus: "pending",
