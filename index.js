@@ -9,7 +9,8 @@ process.on("uncaughtException", (err) => {
 
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ UNHANDLED REJECTION:", reason);
-  process.exit(1);
+  // Don't crash the entire API on a single rejected promise.
+  // We'll rely on logs + fixes rather than downtime.
 });
 
 // ─── Env ────────────────────────────────────────~─────────────────────────────
@@ -46,6 +47,8 @@ import {
 
 import env from "./utils/env.js";
 import Admin from "./models/Admin.js";
+import Customer from "./customerSchema.js";
+import Worker from "./workerSchema.js";
 import { cleanupLegacyMongoSuperAdmins } from "./services/envSuperAdmin.js";
 import { normalizeLegacyDbStatuses } from "./utils/dbNormalize.js";
 
@@ -218,38 +221,87 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("join-user", (data) => {
-    const userId = data?.userId;
+  socket.on("join-user", async (data) => {
     const token =
       data?.token ||
       getAccessTokenFromRequest({
         headers: { cookie: socket.handshake.headers.cookie || "" },
       });
 
-    if (!token || !userId) {
-      return socket.emit("error", { message: "Token and userId required" });
+    if (!token) {
+      return socket.emit("error", { message: "Token required" });
     }
 
     try {
       const decoded = verifyToken(token);
+      if (decoded.role !== "customer" && decoded.role !== "worker") {
+        return socket.emit("error", { message: "User access required" });
+      }
 
-      if (decoded.id !== userId) {
+      const userId = String(decoded.id || "");
+      if (!userId) {
+        return socket.emit("error", { message: "Invalid token" });
+      }
+
+      // Optional client userId must match token identity
+      if (data?.userId && String(data.userId) !== userId) {
         return socket.emit("error", { message: "User mismatch" });
       }
 
-      setUserSocket(userId, socket.id);
+      if (decoded.role === "worker") {
+        const worker = await Worker.findOne({
+          _id: userId,
+          isDeleted: { $ne: true },
+        })
+          .select("isDisabled status")
+          .lean();
+        if (!worker) {
+          return socket.emit("error", { message: "Worker account not found" });
+        }
+        if (worker.isDisabled) {
+          return socket.emit("error", {
+            message: "Worker account disabled",
+            code: "WORKER_DISABLED",
+          });
+        }
+        if (worker.status === "rejected") {
+          return socket.emit("error", {
+            message: "Worker account rejected",
+            code: "WORKER_REJECTED",
+          });
+        }
+      } else {
+        const customer = await Customer.findOne({
+          _id: userId,
+          isDeleted: { $ne: true },
+        })
+          .select("isActive status")
+          .lean();
+        if (!customer) {
+          return socket.emit("error", { message: "Customer account not found" });
+        }
+        if (customer.isActive === false) {
+          return socket.emit("error", {
+            message: "Customer account deactivated",
+            code: "CUSTOMER_DEACTIVATED",
+          });
+        }
+        if (customer.status === "rejected") {
+          return socket.emit("error", {
+            message: "Customer account rejected",
+            code: "CUSTOMER_REJECTED",
+          });
+        }
+      }
 
+      setUserSocket(userId, socket.id);
       socket.userId = userId;
       socket.userRole = decoded.role;
 
       if (decoded.role === "worker") {
         socket.join("workers-room");
       }
-
-      if (decoded.role === "customer" || decoded.role === "worker") {
-        setUserPresenceOnline(userId, decoded.role);
-      }
-
+      setUserPresenceOnline(userId, decoded.role);
       logger.info("User joined", { userId, role: decoded.role });
     } catch {
       socket.emit("error", { message: "Invalid token" });
@@ -334,6 +386,53 @@ app.use(
   (req, res, next) => {
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     next();
+  },
+  async (req, res, next) => {
+    // Sensitive folders must require an admin token (cookie-supported).
+    const p = String(req.path || "");
+    const isSensitive =
+      p.startsWith("/payment-receipts/") || p.startsWith("/admin-profiles/");
+    if (!isSensitive) return next();
+
+    const token = getAccessTokenFromRequest({
+      headers: {
+        cookie: req.headers.cookie || "",
+        authorization: req.headers.authorization || "",
+      },
+    });
+    if (!token) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Authorization required." });
+    }
+
+    try {
+      const decoded = verifyToken(token);
+      if (decoded.role !== "admin") {
+        return res
+          .status(403)
+          .json({ success: false, message: "Admin access required." });
+      }
+
+      const { isEnvSuperAdminToken } = await import("./services/envSuperAdmin.js");
+      if (isEnvSuperAdminToken(decoded)) return next();
+
+      const adminDoc = await Admin.findById(decoded.id).select("isActive").lean();
+      if (!adminDoc) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Admin account not found." });
+      }
+      if (!adminDoc.isActive) {
+        return res
+          .status(403)
+          .json({ success: false, message: "Admin account deactivated." });
+      }
+
+      return next();
+    } catch {
+      return res.status(401).json({ success: false, message: "Invalid token." });
+    }
   },
   express.static(path.join(__dirname, "uploads")),
 );

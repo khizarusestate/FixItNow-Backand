@@ -1180,6 +1180,20 @@ router.delete(
         .status(404)
         .json({ success: false, message: "Worker not found." });
     }
+    if (worker.isDeleted) {
+      return res.status(400).json({
+        success: false,
+        message: "Account is already deleted.",
+        code: "ACCOUNT_ALREADY_DELETED",
+      });
+    }
+    if (worker.isDisabled) {
+      return res.status(400).json({
+        success: false,
+        message: "Account is disabled. Please contact support.",
+        code: "ACCOUNT_DISABLED",
+      });
+    }
 
     // Revoke all refresh tokens for this worker
     try {
