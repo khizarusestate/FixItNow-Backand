@@ -188,7 +188,8 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  if (!admin.isActive) {
+  // Super admins can never be blocked by isActive — only regular admins
+  if (!admin.isActive && admin.role !== 'super_admin') {
     return res.status(403).json({
       success: false,
       message: 'Your account has been deactivated. Please contact the super admin.',

@@ -69,7 +69,8 @@ export const requireAdmin = asyncHandler(async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Admin account not found.', code: 'ADMIN_NOT_FOUND' });
   }
 
-  if (!adminDoc.isActive) {
+  // Super admins can never be blocked — only regular admins respect isActive
+  if (!adminDoc.isActive && adminDoc.role !== 'super_admin') {
     return res.status(403).json({
       success: false,
       message: 'Your account has been deactivated. Please contact the super admin.',
@@ -112,7 +113,8 @@ export const requireSuperAdmin = asyncHandler(async (req, res, next) => {
   if (!adminDoc) {
     return res.status(401).json({ success: false, message: 'Admin account not found.' });
   }
-  if (!adminDoc.isActive) {
+  // Super admins can never be blocked — only regular admins respect isActive
+  if (!adminDoc.isActive && adminDoc.role !== 'super_admin') {
     return res.status(403).json({
       success: false,
       message: 'Account has been deactivated.',
