@@ -376,9 +376,15 @@ router.post(
 
     await user.save();
 
+    const verifiedMessage =
+      role === "worker"
+        ? "Email verified successfully. Your application is pending admin approval — you can login once approved."
+        : "Email verified successfully. You can now login.";
+
     return res.json({
       success: true,
-      message: "Email verified successfully. You can now login.",
+      message: verifiedMessage,
+      data: { role },
     });
   }),
 );
@@ -991,7 +997,8 @@ router.post(
 
     return res.status(201).json({
       success: true,
-      message: "Application submitted. Your account is pending admin approval.",
+      message:
+        "Application submitted. Check your email for the 6-digit verification code, then wait for admin approval before logging in.",
       data: {
         id: worker._id,
         _id: worker._id,
@@ -1059,11 +1066,13 @@ router.post(
       });
     }
 
-    if (!worker.isVerified && worker.status !== "active") {
+    if (!worker.isVerified) {
       return res.status(403).json({
         success: false,
+        code: "EMAIL_NOT_VERIFIED",
         message:
           "Please verify your email before logging in. Check your inbox for the 6-digit code.",
+        email: worker.emailAddress,
       });
     }
 
