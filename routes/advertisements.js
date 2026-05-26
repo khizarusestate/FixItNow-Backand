@@ -11,7 +11,7 @@ import Worker from "../workerSchema.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { emitToAdmin, emitToUser } from "../utils/socketManager.js";
-import { notifyAllAdmins } from "../utils/createNotification.js";
+import { createNotification, notifyAllAdmins } from "../utils/createNotification.js";
 import {
   parsePayAfterWork,
   validatePaymentSelection,
@@ -574,6 +574,8 @@ router.patch(
     });
 
     // Notify submitter about approval/rejection (separate from account notifications)
+    const statusMessage = `Your advertisement has been ${status === "approved" ? "approved" : "rejected"}.${adminNote ? ` Note: ${adminNote}` : ""}`;
+
     emitToUser(
       String(advertisement.submitterId),
       "advertisement-status-update",
@@ -581,9 +583,21 @@ router.patch(
         adId: advertisement._id,
         status: advertisement.status,
         adminNote: advertisement.adminNote,
-        message: `Your advertisement has been ${status === "approved" ? "approved" : "rejected"}. ${adminNote ? `Reason: ${adminNote}` : ""}`,
+        message: statusMessage,
       },
     );
+
+    if (advertisement.submitterId && advertisement.submitterType) {
+      await createNotification({
+        userId: advertisement.submitterId,
+        userRole: advertisement.submitterType,
+        title: status === "approved" ? "Advertisement approved" : "Advertisement rejected",
+        message: statusMessage,
+        type: status === "approved" ? "success" : "warning",
+        relatedEntityId: advertisement._id,
+        link: "#advertise",
+      });
+    }
 
     return res.json({
       success: true,

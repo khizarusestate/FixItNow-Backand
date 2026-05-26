@@ -160,7 +160,11 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil');
   if (!admin) {
     logger.warn('Failed admin login — unknown email', { email: email.toLowerCase().trim(), loginAs, ip: req.ip });
-    return res.status(401).json({ success: false, message: 'No admin account found for this email.' });
+    return res.status(401).json({
+      success: false,
+      message: 'No admin account found for this email.',
+      code: 'ADMIN_NOT_FOUND',
+    });
   }
 
   if (admin.isLocked()) {
@@ -176,7 +180,11 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   if (!pinValid) {
     await admin.recordFailedLogin();
     logger.warn('Failed admin login — invalid PIN', { email: admin.email, loginAs, ip: req.ip });
-    return res.status(401).json({ success: false, message: 'Incorrect PIN.' });
+    return res.status(401).json({
+      success: false,
+      message: 'Incorrect PIN.',
+      code: 'INVALID_PIN',
+    });
   }
 
   if (!admin.isActive) {

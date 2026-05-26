@@ -7,6 +7,7 @@ import Worker from '../workerSchema.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { emitToAdmin, emitToUser } from '../utils/socketManager.js';
+import { createNotification } from '../utils/createNotification.js';
 
 const router = express.Router();
 
@@ -247,12 +248,26 @@ router.patch('/:id/status', requireAdmin, asyncHandler(async (req, res) => {
   });
 
   // Notify submitter about approval/rejection (separate from account notifications)
+  const statusMessage = `Your review has been ${status === 'approved' ? 'approved' : 'rejected'}.${adminNote ? ` Note: ${adminNote}` : ''}`;
+
   emitToUser(String(review.submitterId), 'app-review-status-update', {
     reviewId: review._id,
     status: review.status,
     adminNote: review.adminNote,
-    message: `Your review has been ${status === 'approved' ? 'approved' : 'rejected'}. ${adminNote ? `Reason: ${adminNote}` : ''}`
+    message: statusMessage,
   });
+
+  if (review.submitterId && review.submitterType) {
+    await createNotification({
+      userId: review.submitterId,
+      userRole: review.submitterType,
+      title: status === 'approved' ? 'Review approved' : 'Review rejected',
+      message: statusMessage,
+      type: status === 'approved' ? 'success' : 'warning',
+      relatedEntityId: review._id,
+      link: '#reviews',
+    });
+  }
 
   return res.json({
     success: true,

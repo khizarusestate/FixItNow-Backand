@@ -16,6 +16,7 @@ import {
   rejectBookingAction,
 } from "../utils/bookingActions.js";
 import { finalizeBookingCompletion } from "../utils/bookingCompletion.js";
+import { createNotification } from "../utils/createNotification.js";
 
 const router = express.Router();
 
@@ -354,19 +355,43 @@ router.post(
       booking.customerId?._id?.toString() || String(booking.customerId || "");
 
     if (finalized) {
+      const customerMsg = `Your ${booking.serviceTitle} booking is fully completed.`;
+      const workerMsg = `Job "${booking.serviceTitle}" is fully completed.`;
+
       emitToUser(customerId, "booking-status-update", {
         bookingId: booking._id,
         serviceTitle: booking.serviceTitle,
         status: "completed",
         customerMarkedDone: true,
         workerMarkedDone: true,
-        message: `Your ${booking.serviceTitle} booking is fully completed.`,
+        message: customerMsg,
       });
       emitToUser(req.worker.id, "job-completed", {
         bookingId: booking._id,
         serviceTitle: booking.serviceTitle,
         workerEarnings,
-        message: `Job "${booking.serviceTitle}" is fully completed.`,
+        message: workerMsg,
+      });
+
+      if (customerId) {
+        await createNotification({
+          userId: customerId,
+          userRole: "customer",
+          title: "Booking completed",
+          message: customerMsg,
+          type: "success",
+          relatedEntityId: booking._id,
+          link: "#booking",
+        });
+      }
+      await createNotification({
+        userId: req.worker.id,
+        userRole: "worker",
+        title: "Job completed",
+        message: workerMsg,
+        type: "success",
+        relatedEntityId: booking._id,
+        link: "",
       });
     } else {
       if (customerId) {

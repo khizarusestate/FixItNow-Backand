@@ -249,12 +249,15 @@ router.post(
       return res.status(401).json({
         success: false,
         message: "No account found for this email. Please sign up first.",
+        code: "ACCOUNT_NOT_FOUND",
       });
     }
     if (!(await customer.comparePassword(password))) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Incorrect password." });
+      return res.status(401).json({
+        success: false,
+        message: "Incorrect password.",
+        code: "INVALID_PASSWORD",
+      });
     }
 
     if (!customer.isActive) {
@@ -1044,12 +1047,15 @@ router.post(
       return res.status(401).json({
         success: false,
         message: "No account found for this email. Please sign up first.",
+        code: "ACCOUNT_NOT_FOUND",
       });
     }
     if (!(await worker.comparePassword(password))) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Incorrect password." });
+      return res.status(401).json({
+        success: false,
+        message: "Incorrect password.",
+        code: "INVALID_PASSWORD",
+      });
     }
 
     if (!worker.isVerified && worker.status !== "active") {
