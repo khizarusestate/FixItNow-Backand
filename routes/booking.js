@@ -247,6 +247,8 @@ router.post('/',
         });
       }
 
+      const canonicalCategory = String(serviceCategory || category || '').trim();
+
       const booking = await Booking.create({
         customerId: customer?._id || null,
         isGuest,
@@ -254,8 +256,8 @@ router.post('/',
         phone: phone || customer?.phone,
         email: email || customer?.email,
         serviceTitle,
-        category: category || '',
-        serviceCategory: serviceCategory,
+        category: canonicalCategory,
+        serviceCategory: canonicalCategory,
         serviceId: serviceId || null,
         price: servicePrice,
         address: bookingLocation,

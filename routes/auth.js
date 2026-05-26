@@ -34,6 +34,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { validateFile } from "../utils/fileValidation.js";
 import { profilePictureUpload } from "../utils/profilePictureMulter.js";
+import { CUSTOMER_STATUS, WORKER_STATUS } from "../utils/constants.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +52,7 @@ function formatCustomerData(customer) {
     ...loc,
     profilePicture: customer.profilePicture,
     devicePushEnabled: customer.devicePushEnabled !== false,
+    isActive: customer.isActive !== false,
     status: customer.status,
     createdAt: customer.createdAt,
     joinDate: customer.joinDate,
@@ -1137,13 +1139,17 @@ router.delete(
       });
     }
 
-    // Delete all customer data completely
-    await Booking.deleteMany({ customerId });
-    await Review.deleteMany({ customerId });
-    await Notification.deleteMany({ userId: customerId, userRole: "customer" });
-
-    // Delete the customer account
-    await Customer.findByIdAndDelete(customerId);
+    const deletedAt = new Date();
+    await Booking.updateMany(
+      { customerId, isDeleted: { $ne: true } },
+      { $set: { isDeleted: true, deletedAt } },
+    );
+    await Customer.findByIdAndUpdate(customerId, {
+      isDeleted: true,
+      deletedAt,
+      isActive: false,
+      status: CUSTOMER_STATUS.INACTIVE,
+    });
 
     // Notify admin
     emitNotification(
@@ -1185,13 +1191,17 @@ router.delete(
       });
     }
 
-    // Delete all worker data completely
-    await Booking.deleteMany({ workerId });
-    await Review.deleteMany({ workerId });
-    await Notification.deleteMany({ userId: workerId, userRole: "worker" });
-
-    // Delete the worker account
-    await Worker.findByIdAndDelete(workerId);
+    const deletedAt = new Date();
+    await Booking.updateMany(
+      { workerId, isDeleted: { $ne: true } },
+      { $set: { isDeleted: true, deletedAt } },
+    );
+    await Worker.findByIdAndUpdate(workerId, {
+      isDeleted: true,
+      deletedAt,
+      status: WORKER_STATUS.INACTIVE,
+      isDisabled: true,
+    });
 
     // Notify admin
     emitNotification(

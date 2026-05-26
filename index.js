@@ -47,6 +47,7 @@ import {
 import env from "./utils/env.js";
 import Admin from "./models/Admin.js";
 import { cleanupLegacyMongoSuperAdmins } from "./services/envSuperAdmin.js";
+import { normalizeLegacyDbStatuses } from "./utils/dbNormalize.js";
 
 import {
   initializeSocketIO,
@@ -401,6 +402,7 @@ async function startServer() {
 
     await connectDB(env.MONGODB_URI);
     await cleanupLegacyMongoSuperAdmins();
+    await normalizeLegacyDbStatuses();
 
     httpServer.listen(PORT, () => {
       logger.info("Server started", {

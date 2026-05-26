@@ -22,7 +22,6 @@ export const WORKER_STATUS = {
   REJECTED: 'rejected',
   ACTIVE: 'active',
   INACTIVE: 'inactive',
-  ASSIGNED: 'assigned'
 }
 
 export const WORKER_STATUS_VALUES = Object.values(WORKER_STATUS);
@@ -54,8 +53,10 @@ export const CUSTOMER_STATUS_VALUES = Object.values(CUSTOMER_STATUS);
 
 // ─── Payment Methods ─────────────────────────────────────────────────────────────
 export const PAYMENT_METHODS = {
-  EASYPAISA: 'EasyPaisa',
-  JAZZCASH: 'JazzCash'
+  EASYPAISA: 'easypaisa',
+  JAZZCASH: 'jazzcash',
+  HAND_TO_HAND: 'hand-to-hand',
+  PAY_AFTER_WORK: 'pay-after-work',
 }
 
 export const PAYMENT_METHOD_VALUES = Object.values(PAYMENT_METHODS);

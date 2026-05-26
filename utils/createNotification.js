@@ -1,6 +1,10 @@
 import Notification from "../notificationSchema.js";
 import { emitToAdminUser, emitToUser } from "./socketManager.js";
 import { sendWebPushToUser } from "./webPush.js";
+import {
+  ENV_SUPER_ADMIN_ID,
+  isEnvSuperAdminConfigured,
+} from "../services/envSuperAdmin.js";
 import logger from "./logger.js";
 
 /**
@@ -89,11 +93,18 @@ export async function notifyAllAdmins({
 }) {
   try {
     const Admin = (await import("../models/Admin.js")).default;
-    const admins = await Admin.find({ isActive: true }).select("_id").lean();
+    const admins = await Admin.find({ isActive: true, role: "admin" })
+      .select("_id")
+      .lean();
+    const targetIds = admins.map((a) => String(a._id));
+    if (isEnvSuperAdminConfigured()) {
+      targetIds.push(ENV_SUPER_ADMIN_ID);
+    }
+    const uniqueIds = [...new Set(targetIds)];
     await Promise.all(
-      admins.map((a) =>
+      uniqueIds.map((userId) =>
         createNotification({
-          userId: a._id,
+          userId,
           userRole: "admin",
           title,
           message,

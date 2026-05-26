@@ -43,6 +43,13 @@ import { pickBestWorkerForBooking, rankWorkersForBooking } from '../utils/worker
 import { attachAuthToResponse } from '../utils/attachAuthResponse.js';
 import { clearAuthCookies } from '../utils/authCookies.js';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
+import {
+  buildCustomerListQuery,
+  resolveWorkerListStatusFilter,
+  normalizeCustomerStatusInput,
+  normalizeWorkerStatusInput,
+} from '../utils/userStatus.js';
+import { CUSTOMER_STATUS, WORKER_STATUS } from '../utils/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -810,11 +817,20 @@ router.patch('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   const updateFields = {};
-  if (status !== undefined) updateFields.status = status;
+  if (status !== undefined) {
+    updateFields.status =
+      role === 'worker'
+        ? normalizeWorkerStatusInput(status)
+        : normalizeCustomerStatusInput(status);
+  }
   if (isActive !== undefined && role !== 'worker') updateFields.isActive = isActive;
 
   const Model = role === 'worker' ? Worker : Customer;
-  const user = await Model.findByIdAndUpdate(req.params.id, updateFields, { new: true, runValidators: true }).select('-password');
+  const user = await Model.findOneAndUpdate(
+    { _id: req.params.id, isDeleted: false },
+    updateFields,
+    { new: true, runValidators: true },
+  ).select('-password');
 
   if (!user) {
     return res.status(404).json({ success: false, message: 'User not found.' });
@@ -855,24 +871,27 @@ router.delete('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'User not found.' });
   }
 
-  if (role === 'customer' && user.status !== 'inactive' && user.isActive !== false) {
+  if (user.isDeleted) {
+    return res.status(400).json({ success: false, message: 'Account is already deleted.' });
+  }
+
+  if (role === 'customer' && user.status !== CUSTOMER_STATUS.INACTIVE && user.isActive !== false) {
     return res.status(400).json({
       success: false,
       message: 'Customer must be logged out (inactive) before the account can be deleted.',
     });
   }
 
-  if (role === 'worker' && user.status !== 'inactive' && !user.isDeleted) {
+  if (role === 'worker' && user.status !== WORKER_STATUS.INACTIVE) {
     return res.status(400).json({
       success: false,
       message: 'Worker must be logged out (inactive) before the account can be deleted.',
     });
   }
 
-  // Notify the user about account deletion before actually deleting
   emitToUser(String(userId), 'account-deleted', {
     message: 'Your account has been deleted by the admin. Please sign up again to use the app.',
-    deletedAt: new Date().toISOString()
+    deletedAt: new Date().toISOString(),
   });
   createNotification({
     userId,
@@ -882,35 +901,35 @@ router.delete('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
     type: 'warning',
   }).catch(() => {});
 
-  // Delete all related data
+  const deletedAt = new Date();
   if (role === 'customer') {
-    // Delete customer's bookings
-    await Booking.deleteMany({ customerId: userId });
-    // Delete customer's reviews
-    await Review.deleteMany({ customerId: userId });
-    // Delete customer's notifications
-    await Notification.deleteMany({ userId: userId, userRole: 'customer' });
-  } else if (role === 'worker') {
-    // Delete worker's bookings
-    await Booking.deleteMany({ workerId: userId });
-    // Delete worker's reviews
-    await Review.deleteMany({ workerId: userId });
-    // Delete worker's notifications
-    await Notification.deleteMany({ userId: userId, userRole: 'worker' });
+    await Booking.updateMany(
+      { customerId: userId, isDeleted: { $ne: true } },
+      { $set: { isDeleted: true, deletedAt } },
+    );
+    await Customer.findByIdAndUpdate(userId, {
+      isDeleted: true,
+      deletedAt,
+      isActive: false,
+      status: CUSTOMER_STATUS.INACTIVE,
+    });
+  } else {
+    await Worker.findByIdAndUpdate(userId, {
+      isDeleted: true,
+      deletedAt,
+      status: WORKER_STATUS.INACTIVE,
+    });
   }
-
-  // Finally, delete the user account completely
-  await Model.findByIdAndDelete(userId);
 
   emitRefresh(role === 'worker' ? 'workers' : 'customers');
   emitRefresh('bookings');
 
   await logAudit(req, role === 'worker' ? 'worker_delete' : 'customer_delete', role, userId, {
     fullName: user.fullName || user.name,
-    email: user.emailAddress || user.email
+    email: user.emailAddress || user.email,
   });
 
-  return res.json({ success: true, message: 'User and all related data deleted successfully.' });
+  return res.json({ success: true, message: 'Account deleted successfully.' });
 }));
 
 // ─── GET /api/admin/workers ────────────────────────────────────────────────────
@@ -928,10 +947,9 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
 
   const query = { isDeleted: false };
 
-  if (status === 'pending') {
-    query.status = { $in: ['not_approved', 'pending'] };
-  } else if (status) {
-    query.status = status;
+  const resolvedStatus = resolveWorkerListStatusFilter(status);
+  if (resolvedStatus) {
+    query.status = resolvedStatus;
   }
 
   if (startDate || endDate) {
@@ -950,7 +968,8 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
       { fullName: regex },
       { emailAddress: regex },
       { phoneNumber: regex },
-      { serviceCategory: regex },
+      { primaryServiceCategory: regex },
+      { serviceCategories: regex },
       { serviceArea: regex },
       { address: regex },
     ];
@@ -975,9 +994,11 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
   }, {});
 
   const stats = {
-    pending: (counts.not_approved || 0) + (counts.pending || 0),
-    approved: (counts.approved || 0) + (counts.active || 0),
+    pending: counts.not_approved || 0,
+    approved: counts.approved || 0,
+    active: counts.active || 0,
     rejected: counts.rejected || 0,
+    inactive: counts.inactive || 0,
     total: Object.values(counts).reduce((a, b) => a + b, 0),
   };
 
@@ -1017,7 +1038,8 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
     return res.status(400).json({ success: false, message: 'Provide status and/or isDisabled.' });
   }
 
-  if (status && !validStatuses.includes(status)) {
+  const normalizedStatus = status ? normalizeWorkerStatusInput(status) : null;
+  if (normalizedStatus && !validStatuses.includes(normalizedStatus)) {
     return res.status(400).json({ success: false, message: `Status must be one of: ${validStatuses.join(', ')}.` });
   }
 
@@ -1026,7 +1048,7 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
   }
 
   const updateFields = {};
-  if (status) updateFields.status = status;
+  if (normalizedStatus) updateFields.status = normalizedStatus;
   if (isDisabled !== undefined) updateFields.isDisabled = Boolean(isDisabled);
   const worker = await Worker.findByIdAndUpdate(req.params.id, updateFields, { new: true }).select('-password');
   if (!worker) {
@@ -1035,13 +1057,13 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
 
   emitRefresh('workers');
 
-  await logAudit(req, status === 'approved' ? 'worker_approve' : (status === 'rejected' ? 'worker_reject' : 'worker_status_change'), 'worker', worker._id, {
-    status,
+  await logAudit(req, normalizedStatus === 'approved' ? 'worker_approve' : (normalizedStatus === 'rejected' ? 'worker_reject' : 'worker_status_change'), 'worker', worker._id, {
+    status: normalizedStatus,
     fullName: worker.fullName
   });
 
   // Notify worker if approved/rejected (separate from advertisement notifications)
-  if (status === 'approved') {
+  if (normalizedStatus === 'approved') {
     emitToUser(String(worker._id), 'worker-account-approved', {
       message: 'Congratulations! Your worker account has been approved. You can now login and start accepting jobs.',
       approvedAt: new Date().toISOString()
@@ -1054,7 +1076,7 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
       message: 'Your worker account is approved. You can log in and accept jobs.',
       type: 'success',
     }).catch(() => {});
-  } else if (status === 'rejected') {
+  } else if (normalizedStatus === 'rejected') {
     emitToUser(String(worker._id), 'worker-account-rejected', {
       message: 'Your worker account application has been rejected. Please contact support for more information.',
       rejectedAt: new Date().toISOString()
@@ -1067,7 +1089,7 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
       message: 'Your worker application was rejected. Contact support for help.',
       type: 'warning',
     }).catch(() => {});
-  } else if (isDisabled === true || status === 'inactive') {
+  } else if (isDisabled === true || normalizedStatus === WORKER_STATUS.INACTIVE) {
     if (isDisabled === true) {
       emitToUser(String(worker._id), 'account-deleted', {
         message: 'Your worker account has been disabled by an administrator.',
@@ -1205,17 +1227,22 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (!existing) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
-  if (existing.status !== 'inactive') {
+  if (existing.status !== WORKER_STATUS.INACTIVE) {
     return res.status(400).json({
       success: false,
       message: 'Worker must be logged out (inactive) before the account can be deleted.',
     });
   }
 
+  const deletedAt = new Date();
+  await Booking.updateMany(
+    { workerId, isDeleted: { $ne: true } },
+    { $set: { isDeleted: true, deletedAt } },
+  );
   const worker = await Worker.findByIdAndUpdate(
     workerId,
-    { isDeleted: true, deletedAt: new Date(), status: 'inactive' },
-    { new: true }
+    { isDeleted: true, deletedAt, status: WORKER_STATUS.INACTIVE },
+    { new: true },
   );
   if (!worker) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
@@ -1366,14 +1393,7 @@ router.get('/customers', requireAdmin, asyncHandler(async (req, res) => {
   } = req.query;
 
   const query = { isDeleted: false };
-
-  if (status === 'active') {
-    query.isActive = true;
-  } else if (status === 'inactive') {
-    query.isActive = false;
-  } else if (status === 'pending') {
-    query.status = 'pending';
-  }
+  buildCustomerListQuery(query, status);
 
   if (startDate || endDate) {
     query.createdAt = {};
@@ -1400,12 +1420,20 @@ router.get('/customers', requireAdmin, asyncHandler(async (req, res) => {
   const sort = { [sortBy]: order === 'asc' ? 1 : -1 };
   const baseMatch = { isDeleted: false };
 
-  const [customers, total, activeCount, inactiveCount, pendingCount] = await Promise.all([
+  const [customers, total, activeCount, inactiveCount, pendingCount, totalAll] = await Promise.all([
     Customer.find(query).sort(sort).skip(skip).limit(Number(limit)).select('-password').lean(),
     Customer.countDocuments(query),
-    Customer.countDocuments({ ...baseMatch, isActive: true }),
-    Customer.countDocuments({ ...baseMatch, isActive: false }),
-    Customer.countDocuments({ ...baseMatch, status: 'pending' }),
+    Customer.countDocuments({
+      ...baseMatch,
+      isActive: true,
+      status: { $nin: [CUSTOMER_STATUS.REJECTED] },
+    }),
+    Customer.countDocuments({
+      ...baseMatch,
+      $or: [{ isActive: false }, { status: CUSTOMER_STATUS.INACTIVE }],
+    }),
+    Customer.countDocuments({ ...baseMatch, status: CUSTOMER_STATUS.NOT_APPROVED }),
+    Customer.countDocuments(baseMatch),
   ]);
 
   return res.json({
@@ -1415,7 +1443,7 @@ router.get('/customers', requireAdmin, asyncHandler(async (req, res) => {
       active: activeCount,
       inactive: inactiveCount,
       pending: pendingCount,
-      total: activeCount + inactiveCount,
+      total: totalAll,
     },
     pagination: {
       page: Number(page),
@@ -1462,10 +1490,14 @@ router.patch('/customers/:id/status', requireAdmin, asyncHandler(async (req, res
   }
 
   const updateFields = {};
-  if (status) updateFields.status = status;
+  if (status) updateFields.status = normalizeCustomerStatusInput(status);
   if (isActive !== undefined) updateFields.isActive = isActive;
 
-  const customer = await Customer.findByIdAndUpdate(req.params.id, updateFields, { new: true }).select('-password');
+  const customer = await Customer.findOneAndUpdate(
+    { _id: req.params.id, isDeleted: false },
+    updateFields,
+    { new: true, runValidators: true },
+  ).select('-password');
   if (!customer) {
     return res.status(404).json({ success: false, message: 'Customer not found.' });
   }
@@ -1500,13 +1532,13 @@ router.put('/customers/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (email) updateFields.email = email;
   if (phone) updateFields.phone = phone;
   if (address) updateFields.address = address;
-  if (status) updateFields.status = status;
+  if (status) updateFields.status = normalizeCustomerStatusInput(status);
   if (isActive !== undefined) updateFields.isActive = isActive;
 
-  const customer = await Customer.findByIdAndUpdate(
-    req.params.id,
+  const customer = await Customer.findOneAndUpdate(
+    { _id: req.params.id, isDeleted: false },
     updateFields,
-    { new: true, runValidators: true }
+    { new: true, runValidators: true },
   ).select('-password');
 
   if (!customer) {
@@ -1795,7 +1827,6 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
 
   // Update basic profile info
   if (name) admin.name = name;
-  if (name) admin.fullName = name;
   if (email) admin.email = email;
   if (phone) admin.phone = phone;
   if (address) admin.address = address;
