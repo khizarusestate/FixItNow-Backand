@@ -442,6 +442,48 @@ router.post(
       } else if (record.userRole === "worker") {
         user = await Worker.findById(record.userId);
       } else if (record.userRole === "admin") {
+        const {
+          ENV_SUPER_ADMIN_ID,
+          isEnvSuperAdminConfigured,
+          getEnvSuperAdminProfile,
+        } = await import("../services/envSuperAdmin.js");
+        const { ADMIN_PANEL_ROLES } = await import("../middleware/adminRoles.js");
+
+        if (String(record.userId) === ENV_SUPER_ADMIN_ID) {
+          if (!isEnvSuperAdminConfigured()) {
+            await revokeRefreshToken(refreshToken);
+            return res.status(503).json({
+              success: false,
+              message: "Super admin is not configured on the server.",
+            });
+          }
+          const profile = getEnvSuperAdminProfile();
+          const payload = {
+            id: ENV_SUPER_ADMIN_ID,
+            role: "admin",
+            email: profile.email,
+            adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
+          };
+          const newAccessToken = createAccessToken(payload);
+          const newRefreshToken = await createRefreshToken(
+            ENV_SUPER_ADMIN_ID,
+            record.userRole,
+            req,
+            refreshTokenDaysFromRecord(record),
+          );
+          await revokeRefreshToken(refreshToken);
+          return res.json(
+            attachAuthToResponse(res, {
+              accessToken: newAccessToken,
+              refreshToken: newRefreshToken,
+              body: {
+                success: true,
+                message: "Token refreshed successfully.",
+              },
+            }),
+          );
+        }
+
         const Admin = (await import("../models/Admin.js")).default;
         user = await Admin.findById(record.userId);
         if (!user) {

@@ -3,6 +3,7 @@ import PushSubscription from "../pushSubscriptionSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
 import Admin from "../models/Admin.js";
+import { ENV_SUPER_ADMIN_ID } from "../services/envSuperAdmin.js";
 import logger from "./logger.js";
 import env from "./env.js";
 
@@ -28,6 +29,9 @@ export function getVapidPublicKey() {
 
 async function isDevicePushEnabledForUser(userId, userRole) {
   if (!userId || !["customer", "worker", "admin"].includes(userRole)) return false;
+  if (userRole === "admin" && String(userId) === ENV_SUPER_ADMIN_ID) {
+    return true;
+  }
   const Model =
     userRole === "admin" ? Admin : userRole === "worker" ? Worker : Customer;
   const doc = await Model.findById(userId).select("devicePushEnabled").lean();

@@ -5,7 +5,12 @@ import PushSubscription from "../pushSubscriptionSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
 import Admin from "../models/Admin.js";
+import { ENV_SUPER_ADMIN_ID } from "../services/envSuperAdmin.js";
 import { getVapidPublicKey } from "../utils/webPush.js";
+
+function isEnvSuperAdminUser(user) {
+  return user?.role === "admin" && String(user?.id) === ENV_SUPER_ADMIN_ID;
+}
 
 const router = express.Router();
 
@@ -13,6 +18,12 @@ router.get(
   "/preferences",
   requireAuth,
   asyncHandler(async (req, res) => {
+    if (isEnvSuperAdminUser(req.user)) {
+      return res.json({
+        success: true,
+        data: { devicePushEnabled: true },
+      });
+    }
     const Model =
       req.user.role === "admin"
         ? Admin
@@ -39,6 +50,22 @@ router.patch(
       return res.status(400).json({
         success: false,
         message: "devicePushEnabled must be a boolean.",
+      });
+    }
+
+    if (isEnvSuperAdminUser(req.user)) {
+      if (!devicePushEnabled) {
+        await PushSubscription.deleteMany({
+          userId: ENV_SUPER_ADMIN_ID,
+          userRole: "admin",
+        });
+      }
+      return res.json({
+        success: true,
+        message: devicePushEnabled
+          ? "Device notifications enabled."
+          : "Device notifications disabled.",
+        data: { devicePushEnabled },
       });
     }
 

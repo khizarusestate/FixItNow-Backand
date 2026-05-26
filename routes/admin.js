@@ -7,11 +7,14 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { validateAdminLogin } from '../middleware/validation.js';
 import Admin from '../models/Admin.js';
+import { ADMIN_PANEL_ROLES } from '../middleware/adminRoles.js';
 import {
-  ADMIN_PANEL_ROLES,
-  isSuperAdmin,
-  shouldTreatAsSuperAdmin,
-} from '../middleware/adminRoles.js';
+  ENV_SUPER_ADMIN_ID,
+  validateEnvSuperAdminCredentials,
+  isEnvSuperAdminConfigured,
+  isEnvSuperAdminToken,
+  getEnvSuperAdminProfile,
+} from '../services/envSuperAdmin.js';
 import Customer from '../customerSchema.js';
 import Worker from '../workerSchema.js';
 import Booking from '../bookingSchema.js';
@@ -151,6 +154,9 @@ const logAudit = async (req, action, targetType, targetId = null, details = {}) 
 
 // ─── GET /api/admin/me ──────────────────────────────────────────────────────────
 router.get('/me', requireAdmin, asyncHandler(async (req, res) => {
+  if (isEnvSuperAdminToken(req.admin)) {
+    return res.json({ success: true, data: getEnvSuperAdminProfile() });
+  }
   const admin = await Admin.findById(req.admin.id).select('-pin');
   if (!admin) {
     return res.status(404).json({ success: false, message: 'Admin not found.' });
@@ -162,6 +168,72 @@ router.get('/me', requireAdmin, asyncHandler(async (req, res) => {
 router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   const { email, pin, loginAs } = req.body;
 
+  // Super admin: credentials from env only (not MongoDB)
+  if (loginAs === ADMIN_PANEL_ROLES.SUPER_ADMIN) {
+    if (!isEnvSuperAdminConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: 'Super admin is not configured. Set SUPER_ADMIN_EMAIL and SUPER_ADMIN_PIN (8 digits) on the server.',
+        code: 'SUPER_ADMIN_NOT_CONFIGURED',
+      });
+    }
+
+    const check = validateEnvSuperAdminCredentials(email, pin);
+    if (!check.ok) {
+      if (check.code === 'INVALID_PIN') {
+        logger.warn('Failed super admin login — invalid PIN', { ip: req.ip });
+        return res.status(401).json({
+          success: false,
+          message: 'Incorrect PIN.',
+          code: 'INVALID_PIN',
+        });
+      }
+      logger.warn('Failed super admin login — unknown email', { email: email.toLowerCase().trim(), ip: req.ip });
+      return res.status(401).json({
+        success: false,
+        message: 'No admin account found for this email.',
+        code: 'ADMIN_NOT_FOUND',
+      });
+    }
+
+    const profile = getEnvSuperAdminProfile();
+    const tokenPayload = {
+      id: ENV_SUPER_ADMIN_ID,
+      role: 'admin',
+      email: profile.email,
+      adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
+    };
+    const token = createToken(tokenPayload);
+
+    let refreshToken;
+    if (env.USE_REFRESH_TOKENS) {
+      refreshToken = await createRefreshToken(ENV_SUPER_ADMIN_ID, 'admin', req);
+    }
+
+    logger.info('Super admin login successful (env)', { email: profile.email, ip: req.ip });
+
+    return res.json(
+      attachAuthToResponse(res, {
+        accessToken: token,
+        refreshToken,
+        body: {
+          success: true,
+          message: 'Login successful.',
+          admin: {
+            id: ENV_SUPER_ADMIN_ID,
+            name: profile.name,
+            email: profile.email,
+            phone: profile.phone,
+            role: ADMIN_PANEL_ROLES.SUPER_ADMIN,
+            isActive: true,
+            devicePushEnabled: true,
+          },
+        },
+      }),
+    );
+  }
+
+  // Regular admin: MongoDB
   const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil devicePushEnabled');
   if (!admin) {
     logger.warn('Failed admin login — unknown email', { email: email.toLowerCase().trim(), loginAs, ip: req.ip });
@@ -172,33 +244,15 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  const isSuperAdminLogin = shouldTreatAsSuperAdmin({
-    role: admin.role,
-    email: admin.email,
-    loginAs,
-  });
-
-  if (isSuperAdminLogin) {
-    let healed = false;
-    if (!isSuperAdmin(admin.role)) {
-      admin.role = ADMIN_PANEL_ROLES.SUPER_ADMIN;
-      healed = true;
-    }
-    if (!admin.isActive) {
-      admin.isActive = true;
-      healed = true;
-    }
-    if (admin.failedLoginAttempts > 0 || admin.lockUntil) {
-      admin.failedLoginAttempts = 0;
-      admin.lockUntil = null;
-      healed = true;
-    }
-    if (healed) {
-      await admin.save();
-    }
+  if (admin.role === ADMIN_PANEL_ROLES.SUPER_ADMIN) {
+    return res.status(403).json({
+      success: false,
+      message: 'Super Admin must use the Super Admin login option.',
+      code: 'WRONG_LOGIN_PORTAL',
+    });
   }
 
-  if (!isSuperAdminLogin && admin.isLocked()) {
+  if (admin.isLocked()) {
     const mins = Math.ceil((admin.lockUntil - Date.now()) / 60000);
     return res.status(423).json({
       success: false,
@@ -209,9 +263,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
 
   const pinValid = await admin.comparePin(pin);
   if (!pinValid) {
-    if (!isSuperAdminLogin) {
-      await admin.recordFailedLogin();
-    }
+    await admin.recordFailedLogin();
     logger.warn('Failed admin login — invalid PIN', { email: admin.email, loginAs, ip: req.ip });
     return res.status(401).json({
       success: false,
@@ -220,7 +272,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  if (!isSuperAdminLogin && !admin.isActive) {
+  if (!admin.isActive) {
     return res.status(403).json({
       success: false,
       message: 'Your account has been deactivated. Please contact the super admin.',
@@ -228,21 +280,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  const panelRole = admin.role || ADMIN_PANEL_ROLES.ADMIN;
-
-  if (
-    loginAs === ADMIN_PANEL_ROLES.SUPER_ADMIN &&
-    panelRole !== ADMIN_PANEL_ROLES.SUPER_ADMIN &&
-    !isSuperAdminLogin
-  ) {
-    return res.status(403).json({
-      success: false,
-      message: 'This account is not authorized for Super Admin login. Use Admin login instead.',
-      code: 'WRONG_LOGIN_PORTAL',
-    });
-  }
-
-  if (loginAs === ADMIN_PANEL_ROLES.ADMIN && panelRole !== ADMIN_PANEL_ROLES.ADMIN) {
+  if (loginAs === ADMIN_PANEL_ROLES.ADMIN && admin.role !== ADMIN_PANEL_ROLES.ADMIN) {
     return res.status(403).json({
       success: false,
       message: 'Super Admin must use the Super Admin login option.',
@@ -251,6 +289,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   }
 
   await admin.recordSuccessfulLogin(req.ip);
+  const panelRole = admin.role || ADMIN_PANEL_ROLES.ADMIN;
   const tokenPayload = {
     id: admin._id,
     role: 'admin',
@@ -1739,6 +1778,14 @@ router.post('/test-notification', requireAdmin, asyncHandler(async (req, res) =>
 // ─── PUT /api/admin/profile ─────────────────────────────────────────────────────
 // Update admin profile
 router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
+  if (isEnvSuperAdminToken(req.admin)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Super admin profile is managed via server environment variables (SUPER_ADMIN_*).',
+      code: 'ENV_SUPER_ADMIN_READONLY',
+    });
+  }
+
   const { name, email, phone, address, currentPassword, newPassword } = req.body;
   
   const admin = await Admin.findById(req.admin.id);
@@ -1805,6 +1852,15 @@ router.post(
   requireAdmin,
   adminProfileUpload.single('profilePicture'),
   asyncHandler(async (req, res) => {
+    if (isEnvSuperAdminToken(req.admin)) {
+      if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        success: false,
+        message: 'Super admin profile is managed via server environment variables.',
+        code: 'ENV_SUPER_ADMIN_READONLY',
+      });
+    }
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No profile picture uploaded.' });
     }

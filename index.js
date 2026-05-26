@@ -46,7 +46,7 @@ import {
 
 import env from "./utils/env.js";
 import Admin from "./models/Admin.js";
-import { ensureSuperAdminFromEnv } from "./services/superAdminSeed.js";
+import { cleanupLegacyMongoSuperAdmins } from "./services/envSuperAdmin.js";
 
 import {
   initializeSocketIO,
@@ -142,11 +142,35 @@ io.on("connection", (socket) => {
         return socket.emit("error", { message: "Admin access required" });
       }
 
+      const { isEnvSuperAdminToken, ENV_SUPER_ADMIN_ID } = await import(
+        "./services/envSuperAdmin.js"
+      );
+      if (isEnvSuperAdminToken(decoded)) {
+        const adminId = ENV_SUPER_ADMIN_ID;
+        const becameOnline = addAdminSocket(adminId, socket.id);
+        socket.join("admin-room");
+        socket.join(`admin:${adminId}`);
+        socket.isAdmin = true;
+        socket.adminId = adminId;
+        socket.adminPanelRole = "super_admin";
+        socket.join("super-admin-room");
+        if (becameOnline) {
+          emitToAdmin("admin-status-updated", {
+            adminId,
+            status: "active",
+            adminRole: "super_admin",
+            timestamp: new Date().toISOString(),
+          });
+        }
+        logger.info("Super admin joined (env)", { adminId });
+        return;
+      }
+
       const adminDoc = await Admin.findById(decoded.id).select("isActive role");
       if (!adminDoc) {
         return socket.emit("error", { message: "Admin account not found" });
       }
-      if (!adminDoc.isActive && adminDoc.role !== "super_admin") {
+      if (!adminDoc.isActive) {
         return socket.emit("error", {
           message: "Admin account deactivated",
           code: "ADMIN_DEACTIVATED",
@@ -376,7 +400,7 @@ async function startServer() {
     }
 
     await connectDB(env.MONGODB_URI);
-    await ensureSuperAdminFromEnv();
+    await cleanupLegacyMongoSuperAdmins();
 
     httpServer.listen(PORT, () => {
       logger.info("Server started", {

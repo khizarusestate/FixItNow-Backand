@@ -4,7 +4,8 @@ import logger from '../utils/logger.js';
 import { asyncHandler } from './errorHandler.js';
 import { requirePermission, requireOwnership } from '../utils/permissions.js';
 import Admin from '../models/Admin.js';
-import { isSuperAdmin } from './adminRoles.js';
+import { isEnvSuperAdminToken, ENV_SUPER_ADMIN_ID } from '../services/envSuperAdmin.js';
+import { ADMIN_PANEL_ROLES } from './adminRoles.js';
 
 // Generic auth middleware factory
 const makeAuthMiddleware = (role, reqKey) => (req, res, next) => {
@@ -65,13 +66,22 @@ export const requireAdmin = asyncHandler(async (req, res, next) => {
     return res.status(403).json({ success: false, message: 'Admin access required.' });
   }
 
+  if (isEnvSuperAdminToken(decoded)) {
+    req.admin = {
+      ...decoded,
+      id: ENV_SUPER_ADMIN_ID,
+      adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
+      email: decoded.email,
+    };
+    return next();
+  }
+
   const adminDoc = await Admin.findById(decoded.id).select('role isActive email');
   if (!adminDoc) {
     return res.status(401).json({ success: false, message: 'Admin account not found.', code: 'ADMIN_NOT_FOUND' });
   }
 
-  // Super admins can never be blocked — only regular admins respect isActive
-  if (!adminDoc.isActive && adminDoc.role !== 'super_admin') {
+  if (!adminDoc.isActive) {
     return res.status(403).json({
       success: false,
       message: 'Your account has been deactivated. Please contact the super admin.',
@@ -110,36 +120,21 @@ export const requireSuperAdmin = asyncHandler(async (req, res, next) => {
     return res.status(403).json({ success: false, message: 'Admin access required.' });
   }
 
-  const adminDoc = await Admin.findById(decoded.id).select('role isActive email');
-  if (!adminDoc) {
-    return res.status(401).json({ success: false, message: 'Admin account not found.' });
-  }
-  if (!adminDoc.isActive && !isSuperAdmin(adminDoc.role)) {
-    return res.status(403).json({
-      success: false,
-      message: 'Account has been deactivated.',
-      code: 'ADMIN_DEACTIVATED',
-    });
+  if (isEnvSuperAdminToken(decoded)) {
+    req.admin = {
+      ...decoded,
+      id: ENV_SUPER_ADMIN_ID,
+      adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
+      email: decoded.email,
+    };
+    return next();
   }
 
-  const panelRole = decoded.adminRole || adminDoc.role;
-  decoded = {
-    ...decoded,
-    id: String(decoded.id),
-    adminRole: panelRole,
-    email: decoded.email || adminDoc.email,
-  };
-
-  if (panelRole !== 'super_admin') {
-    return res.status(403).json({
-      success: false,
-      message: 'Super admin access required.',
-      code: 'SUPER_ADMIN_REQUIRED',
-    });
-  }
-
-  req.admin = decoded;
-  next();
+  return res.status(403).json({
+    success: false,
+    message: 'Super admin access required.',
+    code: 'SUPER_ADMIN_REQUIRED',
+  });
 });
 export const requireCustomer = makeAuthMiddleware('customer', 'customer');
 export const requireWorker = makeAuthMiddleware('worker', 'worker');
