@@ -205,8 +205,9 @@ router.post(
 );
 
 // ─── POST /api/auth/customer/login ────────────────────────────────────────────
+/** Remember me = 3-day refresh; otherwise long-lived until logout/revoke. */
 const refreshTokenExpiryDays = (rememberMe) =>
-  rememberMe !== false ? 365 : 3;
+  rememberMe === true || rememberMe === "true" ? 3 : 365;
 
 const refreshTokenDaysFromRecord = (record) => {
   const ms = new Date(record.expiresAt).getTime() - Date.now();
