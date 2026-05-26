@@ -19,6 +19,7 @@ import env from "../utils/env.js";
 import logger from "../utils/logger.js";
 import { emitToUser, emitToAdmin } from "../utils/socketManager.js";
 import emailService from "../services/emailService.js";
+import { createNotification, notifyAllAdmins } from "../utils/createNotification.js";
 import { normalizeCnic } from "../utils/cnic.js";
 import {
   applyLocationUpdate,
@@ -178,6 +179,12 @@ router.post(
       `New customer joined: ${customer.fullName}`,
     );
     emitRefresh("customers");
+    notifyAllAdmins({
+      title: "New customer",
+      message: `${customer.fullName} created a new customer account.`,
+      type: "info",
+      relatedEntityId: customer._id,
+    }).catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -271,6 +278,15 @@ router.post(
     }
     await customer.save();
     emitRefresh("customers");
+
+    createNotification({
+      userId: customer._id,
+      userRole: "customer",
+      title: "Logged in",
+      message: `You're logged in FixItNow on ${new Date().toLocaleString()}.`,
+      type: "info",
+      deliverPush: false,
+    }).catch(() => {});
 
     let refreshToken;
     if (env.USE_REFRESH_TOKENS) {
@@ -838,6 +854,12 @@ router.post(
       `New worker applied: ${worker.fullName} (${worker.primaryServiceCategory})`,
     );
     emitRefresh("workers");
+    notifyAllAdmins({
+      title: "New worker application",
+      message: `${worker.fullName} applied as a worker (${worker.primaryServiceCategory}).`,
+      type: "info",
+      relatedEntityId: worker._id,
+    }).catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -944,6 +966,15 @@ router.post(
     }
     await worker.save();
     emitRefresh("workers");
+
+    createNotification({
+      userId: worker._id,
+      userRole: "worker",
+      title: "Logged in",
+      message: `You're logged in FixItNow on ${new Date().toLocaleString()}.`,
+      type: "info",
+      deliverPush: false,
+    }).catch(() => {});
 
     let refreshToken;
     if (env.USE_REFRESH_TOKENS) {

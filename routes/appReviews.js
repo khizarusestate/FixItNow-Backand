@@ -7,7 +7,7 @@ import Worker from '../workerSchema.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { emitToAdmin, emitToUser } from '../utils/socketManager.js';
-import { createNotification } from '../utils/createNotification.js';
+import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 
 const router = express.Router();
 
@@ -86,6 +86,13 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
   });
 
   emitToAdmin('refresh', { type: 'reviews', timestamp: new Date().toISOString() });
+  notifyAllAdmins({
+    title: 'New review submitted',
+    message: `New app review submitted by ${profileUser.fullName}.`,
+    type: 'info',
+    relatedEntityId: review._id,
+    link: '#reviews',
+  }).catch(() => {});
 
   return res.status(201).json({
     success: true,

@@ -15,6 +15,8 @@ export async function createNotification({
   senderId = null,
   relatedEntityId = null,
   link = "",
+  deliverPush = true,
+  pushOptions = null,
 }) {
   if (!userId || !userRole || !title || !message) return null;
 
@@ -49,14 +51,22 @@ export async function createNotification({
       emitToUser(String(userId), "notification-new", payload);
     }
 
-    sendWebPushToUser(userId, userRole, {
-      title: payload.title,
-      message: payload.message,
-      url: payload.link || "/",
-      tag: String(payload.id),
-    }).catch((err) => {
-      logger.warn("Web push dispatch failed", { error: err?.message });
-    });
+    if (deliverPush) {
+      sendWebPushToUser(
+        userId,
+        userRole,
+        {
+          title: payload.title,
+          message: payload.message,
+          url: payload.link || "/",
+          tag: String(payload.id),
+          type: payload.type,
+        },
+        pushOptions,
+      ).catch((err) => {
+        logger.warn("Web push dispatch failed", { error: err?.message });
+      });
+    }
 
     return doc;
   } catch (err) {

@@ -2,6 +2,7 @@ import webpush from "web-push";
 import PushSubscription from "../pushSubscriptionSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
+import Admin from "../models/Admin.js";
 import logger from "./logger.js";
 import env from "./env.js";
 
@@ -26,14 +27,15 @@ export function getVapidPublicKey() {
 }
 
 async function isDevicePushEnabledForUser(userId, userRole) {
-  if (!userId || !["customer", "worker"].includes(userRole)) return false;
-  const Model = userRole === "worker" ? Worker : Customer;
+  if (!userId || !["customer", "worker", "admin"].includes(userRole)) return false;
+  const Model =
+    userRole === "admin" ? Admin : userRole === "worker" ? Worker : Customer;
   const doc = await Model.findById(userId).select("devicePushEnabled").lean();
   if (!doc) return false;
   return doc.devicePushEnabled !== false;
 }
 
-export async function sendWebPushToUser(userId, userRole, payload) {
+export async function sendWebPushToUser(userId, userRole, payload, pushOptions = null) {
   if (!ensureConfigured()) return { sent: 0, skipped: true };
 
   const pushAllowed = await isDevicePushEnabledForUser(userId, userRole);
@@ -58,6 +60,7 @@ export async function sendWebPushToUser(userId, userRole, payload) {
             keys: sub.keys,
           },
           body,
+          pushOptions || undefined,
         );
         sent += 1;
       } catch (err) {

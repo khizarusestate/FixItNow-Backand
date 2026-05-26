@@ -158,7 +158,7 @@ router.get('/me', requireAdmin, asyncHandler(async (req, res) => {
 router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   const { email, pin, loginAs } = req.body;
 
-  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil');
+  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil devicePushEnabled');
   if (!admin) {
     logger.warn('Failed admin login — unknown email', { email: email.toLowerCase().trim(), loginAs, ip: req.ip });
     return res.status(401).json({
@@ -244,6 +244,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
           phone: admin.phone,
           role: panelRole,
           isActive: admin.isActive,
+          devicePushEnabled: admin.devicePushEnabled !== false,
         },
       },
     }),
@@ -674,7 +675,8 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
     userRole: 'worker',
     title: 'New job assigned',
     message: `You were assigned: ${updatedBooking.serviceTitle}.`,
-    type: 'job',
+    type: 'urgent',
+    pushOptions: { urgency: 'high' },
   }).catch(() => {});
 
   return res.json({
@@ -745,6 +747,19 @@ router.patch('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
 
   emitRefresh(role === 'worker' ? 'workers' : 'customers');
 
+  if (role === 'customer' && isActive === false) {
+    emitToUser(String(user._id), 'account-deleted', {
+      message: 'Your customer account has been disabled by an administrator.',
+    });
+    createNotification({
+      userId: user._id,
+      userRole: 'customer',
+      title: 'Account disabled',
+      message: 'Your customer account was disabled by an administrator.',
+      type: 'warning',
+    }).catch(() => {});
+  }
+
   return res.json({ success: true, message: 'User updated successfully.', data: user });
 }));
 
@@ -784,6 +799,13 @@ router.delete('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
     message: 'Your account has been deleted by the admin. Please sign up again to use the app.',
     deletedAt: new Date().toISOString()
   });
+  createNotification({
+    userId,
+    userRole: role,
+    title: 'Account deleted',
+    message: 'Your account was deleted by an administrator.',
+    type: 'warning',
+  }).catch(() => {});
 
   // Delete all related data
   if (role === 'customer') {
@@ -976,6 +998,13 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
         message: 'Your worker account has been disabled by an administrator.',
       });
       emailService.sendWorkerAccountStatus(worker, 'inactive').catch(() => {});
+      createNotification({
+        userId: worker._id,
+        userRole: 'worker',
+        title: 'Account disabled',
+        message: 'Your worker account was disabled by an administrator.',
+        type: 'warning',
+      }).catch(() => {});
     }
   } else if (status === 'active') {
     emailService.sendWorkerAccountStatus(worker, 'active').catch(() => {});
@@ -1223,7 +1252,8 @@ router.patch('/bookings/:id/auto-assign', requireAdmin, asyncHandler(async (req,
     userRole: 'worker',
     title: 'New job assigned',
     message: `Auto-assigned: ${updatedBooking.serviceTitle}.`,
-    type: 'job',
+    type: 'urgent',
+    pushOptions: { urgency: 'high' },
   }).catch(() => {});
 
   emitRefresh('bookings');

@@ -73,6 +73,12 @@ const adminSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    /** When false, web push (device) is not sent; in-app admin notifications still work. */
+    devicePushEnabled: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
   {
     timestamps: true,

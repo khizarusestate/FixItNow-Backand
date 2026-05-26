@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth.js";
 import PushSubscription from "../pushSubscriptionSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
+import Admin from "../models/Admin.js";
 import { getVapidPublicKey } from "../utils/webPush.js";
 
 const router = express.Router();
@@ -12,7 +13,12 @@ router.get(
   "/preferences",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const Model = req.user.role === "worker" ? Worker : Customer;
+    const Model =
+      req.user.role === "admin"
+        ? Admin
+        : req.user.role === "worker"
+          ? Worker
+          : Customer;
     const doc = await Model.findById(req.user.id).select("devicePushEnabled");
     if (!doc) {
       return res.status(404).json({ success: false, message: "Account not found." });
@@ -36,7 +42,12 @@ router.patch(
       });
     }
 
-    const Model = req.user.role === "worker" ? Worker : Customer;
+    const Model =
+      req.user.role === "admin"
+        ? Admin
+        : req.user.role === "worker"
+          ? Worker
+          : Customer;
     const doc = await Model.findByIdAndUpdate(
       req.user.id,
       { devicePushEnabled },
