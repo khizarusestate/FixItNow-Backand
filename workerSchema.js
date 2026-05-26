@@ -132,6 +132,11 @@ const workerSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  /** When false, web push (device) is not sent; in-app bell/socket still works. */
+  devicePushEnabled: {
+    type: Boolean,
+    default: true,
+  },
   hourlyRate: {
     type: Number,
     default: 0,

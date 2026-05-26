@@ -2,9 +2,67 @@ import express from "express";
 import { asyncHandler } from "../middleware/errorHandler.js";
 import { requireAuth } from "../middleware/auth.js";
 import PushSubscription from "../pushSubscriptionSchema.js";
+import Customer from "../customerSchema.js";
+import Worker from "../workerSchema.js";
 import { getVapidPublicKey } from "../utils/webPush.js";
 
 const router = express.Router();
+
+router.get(
+  "/preferences",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const Model = req.user.role === "worker" ? Worker : Customer;
+    const doc = await Model.findById(req.user.id).select("devicePushEnabled");
+    if (!doc) {
+      return res.status(404).json({ success: false, message: "Account not found." });
+    }
+    return res.json({
+      success: true,
+      data: { devicePushEnabled: doc.devicePushEnabled !== false },
+    });
+  }),
+);
+
+router.patch(
+  "/preferences",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { devicePushEnabled } = req.body || {};
+    if (typeof devicePushEnabled !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "devicePushEnabled must be a boolean.",
+      });
+    }
+
+    const Model = req.user.role === "worker" ? Worker : Customer;
+    const doc = await Model.findByIdAndUpdate(
+      req.user.id,
+      { devicePushEnabled },
+      { new: true },
+    ).select("devicePushEnabled");
+
+    if (!doc) {
+      return res.status(404).json({ success: false, message: "Account not found." });
+    }
+
+    if (!devicePushEnabled) {
+      await PushSubscription.deleteMany({
+        userId: req.user.id,
+        userRole: req.user.role,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: devicePushEnabled
+        ? "Device notifications enabled."
+        : "Device notifications disabled.",
+      data: { devicePushEnabled: doc.devicePushEnabled !== false },
+    });
+  }),
+);
 
 router.get(
   "/vapid-public-key",

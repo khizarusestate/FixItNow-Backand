@@ -76,6 +76,7 @@ const toWorkerProfilePayload = (worker) => {
     cnicNumber: worker.cnicNumber,
     ...loc,
     profilePicture: worker.profilePicture,
+    devicePushEnabled: worker.devicePushEnabled !== false,
     status: worker.status,
     availability: worker.availability,
     joinDate: worker.joinDate,

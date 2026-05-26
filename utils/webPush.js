@@ -1,5 +1,7 @@
 import webpush from "web-push";
 import PushSubscription from "../pushSubscriptionSchema.js";
+import Customer from "../customerSchema.js";
+import Worker from "../workerSchema.js";
 import logger from "./logger.js";
 import env from "./env.js";
 
@@ -23,8 +25,19 @@ export function getVapidPublicKey() {
   return env.VAPID_PUBLIC_KEY || "";
 }
 
+async function isDevicePushEnabledForUser(userId, userRole) {
+  if (!userId || !["customer", "worker"].includes(userRole)) return false;
+  const Model = userRole === "worker" ? Worker : Customer;
+  const doc = await Model.findById(userId).select("devicePushEnabled").lean();
+  if (!doc) return false;
+  return doc.devicePushEnabled !== false;
+}
+
 export async function sendWebPushToUser(userId, userRole, payload) {
   if (!ensureConfigured()) return { sent: 0, skipped: true };
+
+  const pushAllowed = await isDevicePushEnabledForUser(userId, userRole);
+  if (!pushAllowed) return { sent: 0, skipped: true };
 
   const subs = await PushSubscription.find({
     userId,
