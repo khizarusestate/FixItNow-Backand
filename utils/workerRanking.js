@@ -14,7 +14,7 @@ export function scoreWorker(worker) {
     worker.totalJobs > 0 ? (worker.completedJobs || 0) / worker.totalJobs : 0;
   score += completionRate * 10 * 0.2;
 
-  if (worker.isVerified) score += 1;
+  if (["approved", "active"].includes(worker.status)) score += 1;
   if (worker.availability !== false) score += 5;
 
   return Math.round(score * 100) / 100;
@@ -41,7 +41,7 @@ export async function rankWorkersForBooking(booking) {
 
   const workers = await Worker.find(query)
     .select(
-      "fullName phoneNumber emailAddress primaryServiceCategory yearsOfExperience rating totalJobs completedJobs isVerified availability status",
+      "fullName phoneNumber emailAddress primaryServiceCategory yearsOfExperience rating totalJobs completedJobs availability status",
     )
     .lean();
 

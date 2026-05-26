@@ -86,7 +86,6 @@ const sanitizeWorker = (worker) => {
     availability: data.availability ?? true,
     status: data.status,
     isDisabled: data.isDisabled ?? false,
-    isVerified: data.isVerified,
     joinDate: data.joinDate,
     lastActive: data.lastActive,
     createdAt: data.createdAt,
@@ -341,7 +340,7 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   const [bookings, total, statusAgg] = await Promise.all([
     Booking.find(query)
       .populate('customerId', 'fullName email phone profilePicture')
-      .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address profilePicture availability status isVerified lastActive totalJobs completedJobs totalEarnings')
+      .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
       .sort(sort)
       .skip(skip)
       .limit(Number(limit))
@@ -704,7 +703,6 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
         serviceCategory: worker.primaryServiceCategory,
         emailAddress: worker.emailAddress,
         status: worker.status,
-        isVerified: worker.isVerified,
         rating: worker.rating?.toFixed(1) || '0.0',
         totalReviews: worker.totalReviews || 0
       }
@@ -728,7 +726,7 @@ router.get('/users', requireAdmin, asyncHandler(async (req, res) => {
 // ─── PATCH /api/admin/users/:id ───────────────────────────────────────────────
 router.patch('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
   const { role = 'customer' } = req.query;
-  const { status, isVerified, isActive } = req.body;
+  const { status, isActive } = req.body;
 
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid user ID.' });
@@ -736,7 +734,6 @@ router.patch('/users/:id', requireAdmin, asyncHandler(async (req, res) => {
 
   const updateFields = {};
   if (status !== undefined) updateFields.status = status;
-  if (isVerified !== undefined) updateFields.isVerified = isVerified;
   if (isActive !== undefined && role !== 'worker') updateFields.isActive = isActive;
 
   const Model = role === 'worker' ? Worker : Customer;
@@ -934,9 +931,6 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
   const updateFields = {};
   if (status) updateFields.status = status;
   if (isDisabled !== undefined) updateFields.isDisabled = Boolean(isDisabled);
-  if (status === 'approved') updateFields.isVerified = true;
-  if (status === 'rejected') updateFields.isVerified = false;
-
   const worker = await Worker.findByIdAndUpdate(req.params.id, updateFields, { new: true }).select('-password');
   if (!worker) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
@@ -1042,7 +1036,6 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     availability: availability !== undefined ? availability : true,
     hourlyRate: 0,
     status: 'approved',
-    isVerified: true
   });
 
   emitRefresh('workers');
@@ -1082,9 +1075,6 @@ router.put('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (profilePicture !== undefined) updateFields.profilePicture = profilePicture;
   if (availability !== undefined) updateFields.availability = availability;
   if (password) updateFields.password = password;
-
-  if (status === 'approved') updateFields.isVerified = true;
-  if (status === 'rejected' || status === 'not_approved') updateFields.isVerified = false;
 
   const worker = await Worker.findById(req.params.id);
   if (!worker) {
@@ -1360,7 +1350,7 @@ router.get('/customers/:id', requireAdmin, asyncHandler(async (req, res) => {
 
 // ─── PATCH /api/admin/customers/:id/status ────────────────────────────────────
 router.patch('/customers/:id/status', requireAdmin, asyncHandler(async (req, res) => {
-  const { status, isActive, isVerified } = req.body;
+  const { status, isActive } = req.body;
 
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid customer ID.' });
@@ -1369,7 +1359,6 @@ router.patch('/customers/:id/status', requireAdmin, asyncHandler(async (req, res
   const updateFields = {};
   if (status) updateFields.status = status;
   if (isActive !== undefined) updateFields.isActive = isActive;
-  if (isVerified !== undefined) updateFields.isVerified = isVerified;
 
   const customer = await Customer.findByIdAndUpdate(req.params.id, updateFields, { new: true }).select('-password');
   if (!customer) {
@@ -1387,7 +1376,6 @@ router.patch('/customers/:id/status', requireAdmin, asyncHandler(async (req, res
   await logAudit(req, 'customer_status_change', 'customer', customer._id, {
     status,
     isActive,
-    isVerified,
     fullName: customer.fullName
   });
 

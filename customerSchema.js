@@ -36,15 +36,6 @@ const customerSchema = new mongoose.Schema({
     trim: true,
   },
   ...geoLocationSchemaFields,
-  emailVerificationCode: {
-    type: String,
-    default: null,
-    trim: true,
-  },
-  emailVerificationExpiresAt: {
-    type: Date,
-    default: null,
-  },
   passwordResetCode: {
     type: String,
     default: null,
@@ -86,20 +77,15 @@ const customerSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
-  isVerified: {
-    type: Boolean,
-    default: false,
-  },
   status: {
     type: String,
-    default: "pending-verification",
+    default: "active",
     enum: [
       "not_approved",
       "approved",
       "rejected",
       "active",
       "inactive",
-      "pending-verification",
     ],
   },
   isDeleted: {

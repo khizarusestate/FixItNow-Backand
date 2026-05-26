@@ -77,7 +77,6 @@ const toWorkerProfilePayload = (worker) => {
     ...loc,
     profilePicture: worker.profilePicture,
     status: worker.status,
-    isVerified: worker.isVerified,
     availability: worker.availability,
     joinDate: worker.joinDate,
     createdAt: worker.createdAt,

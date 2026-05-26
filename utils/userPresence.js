@@ -20,7 +20,7 @@ export async function setUserPresenceOnline(userId, role) {
     if (!doc.isDisabled && doc.status !== "rejected") {
       if (role === "worker" && ["not_approved", "pending"].includes(doc.status)) {
         /* keep approval status */
-      } else if (doc.status !== "pending-verification") {
+      } else {
         doc.status = "active";
       }
     }

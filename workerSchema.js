@@ -78,15 +78,6 @@ const workerSchema = new mongoose.Schema({
     trim: true,
     maxlength: 1000,
   },
-  emailVerificationCode: {
-    type: String,
-    default: null,
-    trim: true,
-  },
-  emailVerificationExpiresAt: {
-    type: Date,
-    default: null,
-  },
   passwordResetCode: {
     type: String,
     default: null,
@@ -135,12 +126,7 @@ const workerSchema = new mongoose.Schema({
       "rejected",
       "active",
       "inactive",
-      "pending-verification",
     ],
-  },
-  isVerified: {
-    type: Boolean,
-    default: false,
   },
   availability: {
     type: Boolean,

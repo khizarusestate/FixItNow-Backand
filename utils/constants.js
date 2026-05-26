@@ -22,7 +22,6 @@ export const WORKER_STATUS = {
   REJECTED: 'rejected',
   ACTIVE: 'active',
   INACTIVE: 'inactive',
-  PENDING_VERIFICATION: 'pending-verification',
   ASSIGNED: 'assigned'
 }
 

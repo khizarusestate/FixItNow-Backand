@@ -49,7 +49,6 @@ function formatCustomerData(customer) {
     phone: customer.phone,
     ...loc,
     profilePicture: customer.profilePicture,
-    isVerified: customer.isVerified,
     status: customer.status,
     createdAt: customer.createdAt,
     joinDate: customer.joinDate,
@@ -71,7 +70,6 @@ function formatWorkerData(worker) {
     profilePicture: worker.profilePicture,
     availability: worker.availability,
     status: worker.status,
-    isVerified: worker.isVerified,
     joinDate: worker.joinDate,
     createdAt: worker.createdAt,
     updatedAt: worker.updatedAt,
@@ -95,7 +93,7 @@ const emitRefresh = (type) => {
   emitToAdmin("refresh", { type, timestamp: new Date().toISOString() });
 };
 
-const generateVerificationCode = () => {
+const generateResetCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
@@ -162,30 +160,14 @@ router.post(
       });
     }
 
-    const emailVerificationCode = generateVerificationCode();
-    const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
     const customer = await Customer.create({
       fullName,
       email,
       password,
       phone,
       location: location || "",
-      status: "pending-verification",
-      isVerified: false,
-      emailVerificationCode,
-      emailVerificationExpiresAt: verificationExpiresAt,
+      status: "active",
     });
-
-    // Send verification email (non-blocking)
-    emailService
-      .sendVerificationCode(customer, emailVerificationCode, "customer")
-      .catch((err) => {
-        logger.warn("Verification email failed to send", {
-          email: customer.email,
-          error: err.message,
-        });
-      });
 
     // Notify admin of new customer
     emitNotification(
@@ -197,8 +179,7 @@ router.post(
 
     return res.status(201).json({
       success: true,
-      message:
-        "Account created successfully. Check your email for the verification code before logging in.",
+      message: "Account created successfully. You can log in now.",
       data: formatCustomerData(customer),
     });
   }),
@@ -268,16 +249,6 @@ router.post(
       });
     }
 
-    if (!customer.isVerified || customer.status === "pending-verification") {
-      return res.status(403).json({
-        success: false,
-        code: "EMAIL_NOT_VERIFIED",
-        message:
-          "Please verify your email before logging in. Check your inbox for the 6-digit code.",
-        email: customer.email,
-      });
-    }
-
     if (customer.status === "rejected") {
       return res.status(403).json({
         success: false,
@@ -293,7 +264,7 @@ router.post(
     const token = createToken(tokenPayload);
 
     customer.lastActive = new Date();
-    if (customer.status !== "rejected" && customer.status !== "pending-verification") {
+    if (customer.status !== "rejected") {
       customer.status = "active";
     }
     await customer.save();
@@ -324,116 +295,6 @@ router.post(
 );
 
 router.post(
-  "/verify-email",
-  asyncHandler(async (req, res) => {
-    const { email, code } = req.body;
-    if (!email || !code) {
-      return res.status(400).json({
-        success: false,
-        message: "Email and verification code are required.",
-      });
-    }
-
-    const found = await findUserByEmail(email);
-    if (!found) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Account not found." });
-    }
-
-    const { user, role } = found;
-    if (user.isVerified) {
-      return res.json({ success: true, message: "Email already verified." });
-    }
-
-    if (!user.emailVerificationCode || !user.emailVerificationExpiresAt) {
-      return res.status(400).json({
-        success: false,
-        message: "No verification code was issued. Please request a new one.",
-      });
-    }
-
-    if (user.emailVerificationCode !== String(code).trim()) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid verification code." });
-    }
-
-    if (user.emailVerificationExpiresAt < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: "Verification code has expired. Please request a new code.",
-      });
-    }
-
-    user.isVerified = true;
-    user.emailVerificationCode = null;
-    user.emailVerificationExpiresAt = null;
-
-    if (role === "customer") {
-      user.status = "active";
-    }
-
-    await user.save();
-
-    const verifiedMessage =
-      role === "worker"
-        ? "Email verified successfully. Your application is pending admin approval — you can login once approved."
-        : "Email verified successfully. You can now login.";
-
-    return res.json({
-      success: true,
-      message: verifiedMessage,
-      data: { role },
-    });
-  }),
-);
-
-router.post(
-  "/resend-verification",
-  asyncHandler(async (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email is required." });
-    }
-
-    const found = await findUserByEmail(email);
-    if (!found) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Account not found." });
-    }
-
-    const { user, role } = found;
-    if (user.isVerified) {
-      return res.json({ success: true, message: "Email is already verified." });
-    }
-
-    const emailVerificationCode = generateVerificationCode();
-    const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    user.emailVerificationCode = emailVerificationCode;
-    user.emailVerificationExpiresAt = verificationExpiresAt;
-    await user.save();
-
-    emailService
-      .sendVerificationCode(user, emailVerificationCode, role)
-      .catch((err) => {
-        logger.warn("Resend verification email failed", {
-          email: getEmailForUser(user, role),
-          error: err.message,
-        });
-      });
-
-    return res.json({
-      success: true,
-      message: "Verification code resent. Check your email.",
-    });
-  }),
-);
-
-router.post(
   "/password/forgot",
   asyncHandler(async (req, res) => {
     const { email } = req.body;
@@ -451,7 +312,7 @@ router.post(
     }
 
     const { user, role } = found;
-    const passwordResetCode = generateVerificationCode();
+    const passwordResetCode = generateResetCode();
     const passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     user.passwordResetCode = passwordResetCode;
@@ -523,10 +384,7 @@ router.post(
     user.password = password;
     user.passwordResetCode = null;
     user.passwordResetExpiresAt = null;
-    if (!user.isVerified) {
-      user.isVerified = true;
-    }
-    if (role === "customer" && user.status === "pending-verification") {
+    if (role === "customer" && user.status !== "rejected") {
       user.status = "active";
     }
     await user.save();
@@ -943,8 +801,6 @@ router.post(
       : [];
 
     const { latitude, longitude, placeId } = parseLocationBody(req.body);
-    const emailVerificationCode = generateVerificationCode();
-    const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     const worker = await Worker.create({
       fullName,
@@ -965,27 +821,13 @@ router.post(
       experience: "",
       availability: true,
       status: "not_approved",
-      isVerified: false,
-      emailVerificationCode,
-      emailVerificationExpiresAt: verificationExpiresAt,
     });
 
-    // Send confirmation email (non-blocking)
     emailService.sendWorkerApprovalPending(worker).catch((err) => {
       logger.warn("Worker confirmation email failed to send", {
         email: worker.emailAddress,
       });
     });
-
-    // Send email verification code for worker account
-    emailService
-      .sendVerificationCode(worker, emailVerificationCode, "worker")
-      .catch((err) => {
-        logger.warn("Worker verification email failed to send", {
-          email: worker.emailAddress,
-          error: err.message,
-        });
-      });
 
     // Notify admin of new worker registration
     emitNotification(
@@ -998,7 +840,7 @@ router.post(
     return res.status(201).json({
       success: true,
       message:
-        "Application submitted. Check your email for the 6-digit verification code, then wait for admin approval before logging in.",
+        "Application submitted. Admin will approve your account — you can log in after approval.",
       data: {
         id: worker._id,
         _id: worker._id,
@@ -1063,16 +905,6 @@ router.post(
         success: false,
         message: "Incorrect password.",
         code: "INVALID_PASSWORD",
-      });
-    }
-
-    if (!worker.isVerified) {
-      return res.status(403).json({
-        success: false,
-        code: "EMAIL_NOT_VERIFIED",
-        message:
-          "Please verify your email before logging in. Check your inbox for the 6-digit code.",
-        email: worker.emailAddress,
       });
     }
 
