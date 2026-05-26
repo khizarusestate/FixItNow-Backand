@@ -48,6 +48,10 @@ export function getUserSocket(userId) {
   return userSockets.get(String(userId));
 }
 
+export function isUserConnected(userId) {
+  return userSockets.has(String(userId));
+}
+
 export function setUserSocket(userId, socketId) {
   // Always normalize to string for consistent storage
   userSockets.set(String(userId), socketId);

@@ -1,5 +1,6 @@
 import Notification from "../notificationSchema.js";
 import { emitToAdminUser, emitToUser } from "./socketManager.js";
+import { sendWebPushToUser } from "./webPush.js";
 import logger from "./logger.js";
 
 /**
@@ -47,6 +48,15 @@ export async function createNotification({
     } else {
       emitToUser(String(userId), "notification-new", payload);
     }
+
+    sendWebPushToUser(userId, userRole, {
+      title: payload.title,
+      message: payload.message,
+      url: payload.link || "/",
+      tag: String(payload.id),
+    }).catch((err) => {
+      logger.warn("Web push dispatch failed", { error: err?.message });
+    });
 
     return doc;
   } catch (err) {

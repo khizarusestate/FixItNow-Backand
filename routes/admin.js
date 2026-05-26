@@ -17,7 +17,7 @@ import Service from '../models/Service.js';
 import { createToken, createRefreshToken } from '../utils/jwt.js';
 import env from '../utils/env.js';
 import mongoose from 'mongoose';
-import { getSocketIO, emitToUser, emitToAdmin } from '../utils/socketManager.js';
+import { getSocketIO, emitToUser, emitToAdmin, isUserConnected } from '../utils/socketManager.js';
 import { sendApiError, ERROR_CODES } from '../utils/apiErrors.js';
 import {
   BOOKING_ACTION,
@@ -91,7 +91,8 @@ const sanitizeWorker = (worker) => {
     lastActive: data.lastActive,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
-    type: 'worker'
+    type: 'worker',
+    isOnline: isUserConnected(String(data._id)),
   };
 };
 
@@ -100,6 +101,7 @@ const sanitizeCustomer = (customer) => {
   return {
     ...data,
     ...formatLocationResponse(data),
+    isOnline: isUserConnected(String(data._id)),
   };
 };
 

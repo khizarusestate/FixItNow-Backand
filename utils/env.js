@@ -62,6 +62,10 @@ const env = cleanEnv(process.env, {
   EMAIL_FROM_NAME: str({ default: "Fix It Now" }),
 
   FRONTEND_URL: str({ default: "http://localhost:5173" }),
+
+  VAPID_PUBLIC_KEY: str({ default: "" }),
+  VAPID_PRIVATE_KEY: str({ default: "" }),
+  VAPID_SUBJECT: str({ default: "mailto:support@fixitnow.app" }),
 });
 
 if (

@@ -58,6 +58,10 @@ import {
   emitToAdmin,
   emitToSuperAdmins,
 } from "./utils/socketManager.js";
+import {
+  setUserPresenceOnline,
+  setUserPresenceOffline,
+} from "./utils/userPresence.js";
 import { getAccessTokenFromRequest } from "./utils/authCookies.js";
 
 // ❌ REMOVED: Redis import
@@ -217,7 +221,11 @@ io.on("connection", (socket) => {
         socket.join("workers-room");
       }
 
-      logger.info("User joined", { userId });
+      if (decoded.role === "customer" || decoded.role === "worker") {
+        setUserPresenceOnline(userId, decoded.role);
+      }
+
+      logger.info("User joined", { userId, role: decoded.role });
     } catch {
       socket.emit("error", { message: "Invalid token" });
     }
@@ -225,7 +233,11 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     if (socket.userId) {
+      const role = socket.userRole;
       removeUserSocket(socket.userId);
+      if (role === "customer" || role === "worker") {
+        setUserPresenceOffline(socket.userId, role);
+      }
     }
 
     if (socket.isAdmin && socket.adminId) {
