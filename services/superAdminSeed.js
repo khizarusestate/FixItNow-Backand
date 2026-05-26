@@ -28,7 +28,26 @@ export async function ensureSuperAdminFromEnv() {
     return null;
   }
 
-  let superAdmin = await Admin.findOne({ role: ADMIN_PANEL_ROLES.SUPER_ADMIN }).select('+pin');
+  let superAdmin = await Admin.findOne({ role: ADMIN_PANEL_ROLES.SUPER_ADMIN }).select(
+    '+pin +failedLoginAttempts +lockUntil',
+  );
+
+  const healAdminRecord = async (doc, label) => {
+    let dirty = false;
+    if (!doc.isActive) {
+      doc.isActive = true;
+      dirty = true;
+    }
+    if (doc.failedLoginAttempts > 0 || doc.lockUntil) {
+      doc.failedLoginAttempts = 0;
+      doc.lockUntil = null;
+      dirty = true;
+    }
+    if (dirty) {
+      await doc.save();
+      logger.info(`Admin account healed (${label})`, { email: doc.email });
+    }
+  };
 
   if (superAdmin) {
     if (superAdmin.email !== email) {
@@ -36,8 +55,28 @@ export async function ensureSuperAdminFromEnv() {
         existing: superAdmin.email,
         envEmail: email,
       });
+      const envAccount = await Admin.findOne({ email }).select('+failedLoginAttempts +lockUntil');
+      if (envAccount) {
+        if (!envAccount.isActive || envAccount.failedLoginAttempts > 0 || envAccount.lockUntil) {
+          await healAdminRecord(envAccount, 'env email');
+        }
+      }
+    } else {
+      await healAdminRecord(superAdmin, 'super admin');
     }
     return superAdmin;
+  }
+
+  // Env email exists as regular admin — promote to super admin
+  const byEnvEmail = await Admin.findOne({ email }).select('+pin +failedLoginAttempts +lockUntil');
+  if (byEnvEmail) {
+    byEnvEmail.role = ADMIN_PANEL_ROLES.SUPER_ADMIN;
+    byEnvEmail.isActive = true;
+    byEnvEmail.failedLoginAttempts = 0;
+    byEnvEmail.lockUntil = null;
+    await byEnvEmail.save();
+    logger.info('Promoted env email account to super admin', { email });
+    return byEnvEmail;
   }
 
   await Admin.deleteMany({ role: ADMIN_PANEL_ROLES.SUPER_ADMIN });

@@ -4,6 +4,7 @@ import logger from '../utils/logger.js';
 import { asyncHandler } from './errorHandler.js';
 import { requirePermission, requireOwnership } from '../utils/permissions.js';
 import Admin from '../models/Admin.js';
+import { isSuperAdmin } from './adminRoles.js';
 
 // Generic auth middleware factory
 const makeAuthMiddleware = (role, reqKey) => (req, res, next) => {
@@ -113,8 +114,7 @@ export const requireSuperAdmin = asyncHandler(async (req, res, next) => {
   if (!adminDoc) {
     return res.status(401).json({ success: false, message: 'Admin account not found.' });
   }
-  // Super admins can never be blocked — only regular admins respect isActive
-  if (!adminDoc.isActive && adminDoc.role !== 'super_admin') {
+  if (!adminDoc.isActive && !isSuperAdmin(adminDoc.role)) {
     return res.status(403).json({
       success: false,
       message: 'Account has been deactivated.',

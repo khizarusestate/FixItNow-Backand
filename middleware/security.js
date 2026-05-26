@@ -4,6 +4,16 @@ import xssClean from "xss-clean";
 import timeout from "connect-timeout";
 import logger from "../utils/logger.js";
 import { RATE_LIMITS } from "../utils/constants.js";
+import {
+  ADMIN_PANEL_ROLES,
+  isEnvSuperAdminEmail,
+} from "./adminRoles.js";
+
+function isSuperAdminLoginRequest(req) {
+  if (req.method !== "POST") return false;
+  if (req.body?.loginAs !== ADMIN_PANEL_ROLES.SUPER_ADMIN) return false;
+  return isEnvSuperAdminEmail(req.body?.email);
+}
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 
@@ -45,6 +55,7 @@ export const strictRateLimit = rateLimit({
   max: RATE_LIMITS.STRICT_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => isSuperAdminLoginRequest(req),
   message: {
     success: false,
     message: "Too many attempts. Please try again after 1 hour.",

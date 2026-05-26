@@ -146,7 +146,7 @@ io.on("connection", (socket) => {
       if (!adminDoc) {
         return socket.emit("error", { message: "Admin account not found" });
       }
-      if (!adminDoc.isActive) {
+      if (!adminDoc.isActive && adminDoc.role !== "super_admin") {
         return socket.emit("error", {
           message: "Admin account deactivated",
           code: "ADMIN_DEACTIVATED",

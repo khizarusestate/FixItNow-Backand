@@ -7,7 +7,11 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { validateAdminLogin } from '../middleware/validation.js';
 import Admin from '../models/Admin.js';
-import { ADMIN_PANEL_ROLES } from '../middleware/adminRoles.js';
+import {
+  ADMIN_PANEL_ROLES,
+  isSuperAdmin,
+  shouldTreatAsSuperAdmin,
+} from '../middleware/adminRoles.js';
 import Customer from '../customerSchema.js';
 import Worker from '../workerSchema.js';
 import Booking from '../bookingSchema.js';
@@ -168,7 +172,33 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  if (admin.isLocked()) {
+  const isSuperAdminLogin = shouldTreatAsSuperAdmin({
+    role: admin.role,
+    email: admin.email,
+    loginAs,
+  });
+
+  if (isSuperAdminLogin) {
+    let healed = false;
+    if (!isSuperAdmin(admin.role)) {
+      admin.role = ADMIN_PANEL_ROLES.SUPER_ADMIN;
+      healed = true;
+    }
+    if (!admin.isActive) {
+      admin.isActive = true;
+      healed = true;
+    }
+    if (admin.failedLoginAttempts > 0 || admin.lockUntil) {
+      admin.failedLoginAttempts = 0;
+      admin.lockUntil = null;
+      healed = true;
+    }
+    if (healed) {
+      await admin.save();
+    }
+  }
+
+  if (!isSuperAdminLogin && admin.isLocked()) {
     const mins = Math.ceil((admin.lockUntil - Date.now()) / 60000);
     return res.status(423).json({
       success: false,
@@ -179,7 +209,9 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
 
   const pinValid = await admin.comparePin(pin);
   if (!pinValid) {
-    await admin.recordFailedLogin();
+    if (!isSuperAdminLogin) {
+      await admin.recordFailedLogin();
+    }
     logger.warn('Failed admin login — invalid PIN', { email: admin.email, loginAs, ip: req.ip });
     return res.status(401).json({
       success: false,
@@ -188,8 +220,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  // Super admins can never be blocked by isActive — only regular admins
-  if (!admin.isActive && admin.role !== 'super_admin') {
+  if (!isSuperAdminLogin && !admin.isActive) {
     return res.status(403).json({
       success: false,
       message: 'Your account has been deactivated. Please contact the super admin.',
@@ -199,7 +230,11 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
 
   const panelRole = admin.role || ADMIN_PANEL_ROLES.ADMIN;
 
-  if (loginAs === ADMIN_PANEL_ROLES.SUPER_ADMIN && panelRole !== ADMIN_PANEL_ROLES.SUPER_ADMIN) {
+  if (
+    loginAs === ADMIN_PANEL_ROLES.SUPER_ADMIN &&
+    panelRole !== ADMIN_PANEL_ROLES.SUPER_ADMIN &&
+    !isSuperAdminLogin
+  ) {
     return res.status(403).json({
       success: false,
       message: 'This account is not authorized for Super Admin login. Use Admin login instead.',
