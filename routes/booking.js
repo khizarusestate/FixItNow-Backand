@@ -193,8 +193,18 @@ router.post('/',
 
       const pm = paymentCheck.method;
 
-      const isGuest = !req.customer;
       let customer = null;
+      let isGuest = true;
+
+      if (req.user?.role === 'customer' && req.user?.id) {
+        customer = await Customer.findOne({
+          _id: req.user.id,
+          isDeleted: false,
+        });
+        if (customer) {
+          isGuest = false;
+        }
+      }
 
       if (isGuest) {
         if (!name || String(name).trim().length < 2) {
@@ -202,11 +212,6 @@ router.post('/',
             success: false,
             message: 'Your full name is required.',
           });
-        }
-      } else {
-        customer = await Customer.findOne({ _id: req.customer.id, isDeleted: false });
-        if (!customer) {
-          return res.status(404).json({ success: false, message: 'Customer not found.' });
         }
       }
 
