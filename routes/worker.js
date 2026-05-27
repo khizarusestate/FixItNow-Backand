@@ -114,7 +114,7 @@ router.get('/available-jobs', requireWorker, asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
-  if (worker.status !== 'approved' && worker.status !== 'active') {
+  if (worker.status !== 'approved' && worker.status !== 'active' && worker.status !== 'inactive') {
     return res.status(403).json({ success: false, message: 'Your account must be approved by admin to view jobs.' });
   }
 
@@ -149,7 +149,7 @@ router.post('/jobs/:id/accept', requireWorker, asyncHandler(async (req, res) => 
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
-  if (worker.status !== 'approved' && worker.status !== 'active') {
+  if (worker.status !== 'approved' && worker.status !== 'active' && worker.status !== 'inactive') {
     return res.status(403).json({ success: false, message: 'Your account must be approved by admin to claim jobs.' });
   }
 

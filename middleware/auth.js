@@ -4,11 +4,15 @@ import logger from '../utils/logger.js';
 import { asyncHandler } from './errorHandler.js';
 import { requirePermission, requireOwnership } from '../utils/permissions.js';
 import Admin from '../models/Admin.js';
+import Customer from '../customerSchema.js';
+import Worker from '../workerSchema.js';
 import { isEnvSuperAdminToken, ENV_SUPER_ADMIN_ID } from '../services/envSuperAdmin.js';
 import { ADMIN_PANEL_ROLES } from './adminRoles.js';
 
 // Generic auth middleware factory
-const makeAuthMiddleware = (role, reqKey) => (req, res, next) => {
+// IMPORTANT: session state (token presence/validity) is NOT used for blocking beyond auth itself.
+// Account-level checks (disabled/deleted/rejected/pending) are enforced via DB for customer/worker.
+const makeAuthMiddleware = (role, reqKey) => async (req, res, next) => {
   const token = getAccessTokenFromRequest(req);
 
   if (!token) {
@@ -27,6 +31,58 @@ const makeAuthMiddleware = (role, reqKey) => (req, res, next) => {
     if (decoded.role !== role) {
       logger.warn('Role mismatch in auth middleware', { expected: role, actual: decoded.role, ip: req.ip });
       return res.status(403).json({ success: false, message: `${role.charAt(0).toUpperCase() + role.slice(1)} access required.` });
+    }
+
+    // Account-state enforcement (permission layer)
+    // Only "disabled" (and equivalent existing DB flags) should block access.
+    if (role === 'worker') {
+      const worker = await Worker.findOne({
+        _id: decoded.id,
+        isDeleted: { $ne: true },
+      })
+        .select('isDisabled status')
+        .lean();
+      if (!worker) {
+        return res.status(401).json({ success: false, message: 'Account not found.' });
+      }
+      if (worker.status === 'rejected') {
+        return res.status(403).json({ success: false, message: 'Your account has been rejected.' });
+      }
+      if (worker.status === 'not_approved') {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account is pending admin approval. Please wait for verification.',
+        });
+      }
+      if (worker.isDisabled) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account has been disabled by an administrator. Please contact support.',
+          code: 'ACCOUNT_DISABLED',
+        });
+      }
+    }
+
+    if (role === 'customer') {
+      const customer = await Customer.findOne({
+        _id: decoded.id,
+        isDeleted: { $ne: true },
+      })
+        .select('isActive status')
+        .lean();
+      if (!customer) {
+        return res.status(401).json({ success: false, message: 'Account not found.' });
+      }
+      if (customer.isActive === false) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account has been deactivated. Please contact support.',
+          code: 'ACCOUNT_DISABLED',
+        });
+      }
+      if (customer.status === 'rejected') {
+        return res.status(403).json({ success: false, message: 'Your account has been rejected.' });
+      }
     }
     
     req[reqKey] = decoded;

@@ -628,24 +628,6 @@ router.post(
           error: err.message,
         });
       }
-
-      if (userRole === "worker" && mongoose.Types.ObjectId.isValid(userId)) {
-        const worker = await Worker.findById(String(userId));
-        if (worker && !worker.isDeleted && worker.status === "active") {
-          worker.status = "inactive";
-          await worker.save();
-          emitRefresh("workers");
-        }
-      }
-
-      if (userRole === "customer" && mongoose.Types.ObjectId.isValid(userId)) {
-        const customer = await Customer.findById(String(userId));
-        if (customer && !customer.isDeleted && customer.status === "active") {
-          customer.status = "inactive";
-          await customer.save();
-          emitRefresh("customers");
-        }
-      }
     }
 
     clearAuthCookies(res);

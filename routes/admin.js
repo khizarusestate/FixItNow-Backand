@@ -662,7 +662,7 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
   if (!booking) {
     return res.status(404).json({ success: false, message: 'Booking not found.' });
   }
-  if (worker.status !== 'approved' && worker.status !== 'active') {
+  if (worker.status !== 'approved' && worker.status !== 'active' && worker.status !== 'inactive') {
     return res.status(400).json({ success: false, message: 'Worker is not approved/active.' });
   }
 
