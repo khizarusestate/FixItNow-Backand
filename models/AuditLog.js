@@ -1,4 +1,8 @@
 import mongoose from 'mongoose';
+import { AUDIT_ACTIONS } from '../utils/constants.js';
+
+const LEGACY_AUDIT_ACTIONS = ['login', 'logout'];
+const AUDIT_ACTION_VALUES = [...new Set([...Object.values(AUDIT_ACTIONS), ...LEGACY_AUDIT_ACTIONS])];
 
 const auditLogSchema = new mongoose.Schema({
   adminId: {
@@ -14,16 +18,7 @@ const auditLogSchema = new mongoose.Schema({
   action: {
     type: String,
     required: true,
-    enum: [
-      'login', 'logout',
-      'worker_approve', 'worker_reject', 'worker_delete', 'worker_create', 'worker_update', 'worker_status_change',
-      'customer_delete', 'customer_update', 'customer_status_change',
-      'booking_assign', 'booking_update', 'booking_delete',
-      'service_create', 'service_update', 'service_delete',
-      'profile_update', 'settings_update',
-      'job_complete',
-      'admin_create', 'admin_update', 'admin_delete'
-    ]
+    enum: AUDIT_ACTION_VALUES
   },
   targetType: {
     type: String,

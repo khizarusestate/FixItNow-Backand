@@ -280,6 +280,14 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   }
 
   if (!admin.isActive) {
+    logger.warn('Admin login blocked: deactivated', {
+      adminId: String(admin._id),
+      role: admin.role,
+      isActive: admin.isActive,
+      email: admin.email,
+      updatedAt: admin.updatedAt,
+      ip: req.ip,
+    });
     return res.status(403).json({
       success: false,
       message: 'Your account has been deactivated. Please contact the super admin.',
