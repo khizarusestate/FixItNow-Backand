@@ -251,8 +251,16 @@ router.patch(
         .json({ success: false, message: "Invalid admin ID." });
     }
 
-    const { isActive } = req.body;
-    if (typeof isActive !== "boolean") {
+    const rawIsActive = req.body?.isActive;
+    const isActive =
+      typeof rawIsActive === "boolean"
+        ? rawIsActive
+        : rawIsActive === "true"
+          ? true
+          : rawIsActive === "false"
+            ? false
+            : null;
+    if (isActive === null) {
       return res
         .status(400)
         .json({ success: false, message: "isActive must be true or false." });
