@@ -91,6 +91,12 @@ adminSchema.index({ lastLogin: -1 });
 
 adminSchema.pre('save', async function preSave(next) {
   try {
+    // Safety guard: new admin accounts must be active by default.
+    // Deactivation is only allowed later via the super admin status endpoint.
+    if (this.isNew && this.isActive === false) {
+      this.isActive = true;
+    }
+
     if (this.isModified('pin') && this.pin) {
       if (!/^\d{8}$/.test(this.pin)) {
         return next(new Error('PIN must be exactly 8 digits.'));
