@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "check": "node --check index.js && node --check adminSchema.js && node --check customerSchema.js && node --check workerSchema.js && node --check reviewSchema.js && node --check notificationSchema.js && node --check middleware/*.js && node --check routes/*.js && node --check utils/*.js",
+    "check": "node scripts/check-syntax.mjs",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js"
   },
   "keywords": [
