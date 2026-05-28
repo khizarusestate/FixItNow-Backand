@@ -73,6 +73,27 @@ const adminSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    // Profile completion fields (required by UX; enforced in profile update route)
+    location: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 300,
+    },
+    latitude: {
+      type: Number,
+      default: null,
+    },
+    longitude: {
+      type: Number,
+      default: null,
+    },
+    placeId: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 200,
+    },
     /** When false, web push (device) is not sent; in-app admin notifications still work. */
     devicePushEnabled: {
       type: Boolean,
@@ -162,6 +183,10 @@ adminSchema.statics.sanitize = function sanitize(doc) {
     createdBy: data.createdBy || null,
     lastLogin: data.lastLogin,
     profilePicture: data.profilePicture || '',
+    location: data.location || '',
+    latitude: data.latitude ?? null,
+    longitude: data.longitude ?? null,
+    placeId: data.placeId || '',
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };

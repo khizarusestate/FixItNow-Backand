@@ -1831,7 +1831,18 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
     });
   }
 
-  const { name, email, phone, address, currentPassword, newPassword } = req.body;
+  const {
+    name,
+    email,
+    phone,
+    location,
+    latitude,
+    longitude,
+    placeId,
+    address, // legacy alias for location
+    currentPassword,
+    newPassword
+  } = req.body;
   
   const admin = await Admin.findById(req.admin.id);
   if (!admin) {
@@ -1842,7 +1853,19 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
   if (name) admin.name = name;
   if (email) admin.email = email;
   if (phone) admin.phone = phone;
-  if (address) admin.address = address;
+
+  const normalizedLocation = String(location || address || admin.location || '').trim();
+  if (!normalizedLocation) {
+    return res.status(400).json({
+      success: false,
+      message: 'Location is required to complete your profile.',
+      code: 'ADMIN_LOCATION_REQUIRED',
+    });
+  }
+  admin.location = normalizedLocation;
+  if (latitude !== undefined) admin.latitude = latitude;
+  if (longitude !== undefined) admin.longitude = longitude;
+  if (placeId !== undefined) admin.placeId = placeId;
 
   // Handle PIN change (Admin uses PIN, not password)
   if (newPassword) {
@@ -1879,7 +1902,10 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
       fullName: updatedAdmin.fullName || updatedAdmin.name || 'Admin User',
       email: updatedAdmin.email,
       phone: updatedAdmin.phone || '+92 300 0000000',
-      address: updatedAdmin.address || 'Office Address, Pakistan',
+      location: updatedAdmin.location || '',
+      latitude: updatedAdmin.latitude ?? null,
+      longitude: updatedAdmin.longitude ?? null,
+      placeId: updatedAdmin.placeId || '',
       role: updatedAdmin.role || 'admin',
       isActive: updatedAdmin.isActive ?? true,
       createdAt: updatedAdmin.createdAt,
