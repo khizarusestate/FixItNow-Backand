@@ -241,7 +241,12 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   }
 
   // Regular admin: MongoDB
-  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil devicePushEnabled');
+  // NOTE: Use only '+field' notation for select: false fields, and let all other
+  // fields (isActive, email, name, phone, role, devicePushEnabled, etc.) be
+  // returned by default. Mixing plain field names in .select() creates an
+  // inclusive projection that silently drops unlisted fields — e.g. isActive
+  // would become undefined and trigger a false ADMIN_DEACTIVATED error.
+  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil');
   if (!admin) {
     logger.warn('Failed admin login — unknown email', { email: email.toLowerCase().trim(), loginAs, ip: req.ip });
     return res.status(401).json({
