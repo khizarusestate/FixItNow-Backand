@@ -98,6 +98,8 @@ const httpServer = createServer(app);
 const CLIENT_ORIGINS = process.env.CLIENT_ORIGINS
   ? process.env.CLIENT_ORIGINS.split(",").map((o) => o.trim())
   : [
+      "https://fix-it-now-omega.vercel.app",
+      "https://fixitnow-admin.vercel.app",
       "http://localhost:3000",
       "http://127.0.0.1:3000",
       "http://localhost:5173",
