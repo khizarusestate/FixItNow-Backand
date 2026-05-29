@@ -241,12 +241,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   }
 
   // Regular admin: MongoDB
-  // NOTE: Use only '+field' notation for select: false fields, and let all other
-  // fields (isActive, email, name, phone, role, devicePushEnabled, etc.) be
-  // returned by default. Mixing plain field names in .select() creates an
-  // inclusive projection that silently drops unlisted fields — e.g. isActive
-  // would become undefined and trigger a false ADMIN_DEACTIVATED error.
-  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil');
+  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil devicePushEnabled');
   if (!admin) {
     logger.warn('Failed admin login — unknown email', { email: email.toLowerCase().trim(), loginAs, ip: req.ip });
     return res.status(401).json({
@@ -1854,18 +1849,20 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
   if (email) admin.email = email;
   if (phone) admin.phone = phone;
 
-  const normalizedLocation = String(location || address || admin.location || '').trim();
-  if (!normalizedLocation) {
-    return res.status(400).json({
-      success: false,
-      message: 'Location is required to complete your profile.',
-      code: 'ADMIN_LOCATION_REQUIRED',
-    });
+  if (admin.role !== 'super_admin') {
+    const normalizedLocation = String(location || address || admin.location || '').trim();
+    if (!normalizedLocation) {
+      return res.status(400).json({
+        success: false,
+        message: 'Location is required to complete your profile.',
+        code: 'ADMIN_LOCATION_REQUIRED',
+      });
+    }
+    admin.location = normalizedLocation;
+    if (latitude !== undefined) admin.latitude = latitude;
+    if (longitude !== undefined) admin.longitude = longitude;
+    if (placeId !== undefined) admin.placeId = placeId;
   }
-  admin.location = normalizedLocation;
-  if (latitude !== undefined) admin.latitude = latitude;
-  if (longitude !== undefined) admin.longitude = longitude;
-  if (placeId !== undefined) admin.placeId = placeId;
 
   // Handle PIN change (Admin uses PIN, not password)
   if (newPassword) {

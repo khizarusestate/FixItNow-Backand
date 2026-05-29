@@ -761,13 +761,12 @@ router.post(
       !password ||
       !phoneNumber ||
       !cnicNumber ||
-      !effectivePrimaryCategory ||
-      !effectiveLocation
+      !effectivePrimaryCategory
     ) {
       return res.status(400).json({
         success: false,
         message:
-          "Full name, email, password, phone, CNIC, service category, and location are required.",
+          "Full name, email, password, phone, CNIC, and service category are required.",
       });
     }
 

@@ -95,11 +95,31 @@ const __dirname = path.dirname(__filename);
 const httpServer = createServer(app);
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
-const CLIENT_ORIGINS = process.env.CLIENT_ORIGINS
-  ? process.env.CLIENT_ORIGINS.split(",").map((o) => o.trim())
-  : [
-      "https://fix-it-now-omega.vercel.app",
-      "https://fixitnow-admin.vercel.app",
+function normalizeOrigin(url) {
+  if (!url || typeof url !== "string") return "";
+  return url.trim().replace(/\/$/, "");
+}
+
+function buildAllowedOrigins() {
+  const origins = new Set();
+  const add = (value) => {
+    const normalized = normalizeOrigin(value);
+    if (normalized) origins.add(normalized);
+  };
+
+  const clientList = process.env.CLIENT_ORIGINS || env.CLIENT_ORIGINS || "";
+  clientList
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .forEach(add);
+
+  add(process.env.FRONTEND_URL || env.FRONTEND_URL);
+  add(process.env.ADMIN_FRONTEND_URL || env.ADMIN_FRONTEND_URL);
+  add(process.env.VITE_APP_URL);
+
+  if (origins.size === 0) {
+    [
       "http://localhost:3000",
       "http://127.0.0.1:3000",
       "http://localhost:5173",
@@ -110,10 +130,27 @@ const CLIENT_ORIGINS = process.env.CLIENT_ORIGINS
       "http://127.0.0.1:5174",
       "http://127.0.0.1:5175",
       "http://127.0.0.1:5176",
-    ];
+      "https://fix-it-now-omega.vercel.app",
+      "https://fixitnow-admin.vercel.app",
+    ].forEach(add);
+  }
+
+  return origins;
+}
+
+const ALLOWED_ORIGINS = buildAllowedOrigins();
 
 const corsOptions = {
-  origin: CLIENT_ORIGINS,
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    const normalized = normalizeOrigin(origin);
+    if (ALLOWED_ORIGINS.has(normalized)) return callback(null, true);
+    logger.warn("CORS blocked request", {
+      origin: normalized,
+      allowed: [...ALLOWED_ORIGINS],
+    });
+    return callback(new Error(`CORS: origin not allowed (${normalized})`));
+  },
   credentials: true,
 };
 

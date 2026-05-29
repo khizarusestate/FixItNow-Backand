@@ -261,11 +261,17 @@ router.get(
       data: bookings.map((booking) => ({
         id: booking._id,
         serviceTitle: booking.serviceTitle,
+        customerName:
+          booking.customerName?.trim() ||
+          booking.customerId?.fullName?.trim() ||
+          (booking.isGuest ? "Guest" : ""),
+        isGuest: Boolean(booking.isGuest),
         phone:
           booking.phone ||
           booking.customerId?.phone ||
           "",
         address: booking.address,
+        location: booking.location || booking.address,
         price: booking.price,
         status: booking.status,
         assignedAt: booking.assignedAt,
@@ -326,7 +332,17 @@ router.post(
     let workerEarnings = 0;
     let newRating = worker.rating || 0;
 
-    if (booking.customerMarkedDone && booking.customerRating) {
+    if (booking.isGuest) {
+      const result = await finalizeBookingCompletion(
+        booking,
+        worker,
+        booking.customerId?._id || booking.customerId || null,
+      );
+      serviceFee = result.serviceFee;
+      workerEarnings = result.workerEarnings;
+      newRating = result.newRating;
+      finalized = true;
+    } else if (booking.customerMarkedDone && booking.customerRating) {
       const result = await finalizeBookingCompletion(
         booking,
         worker,
@@ -414,7 +430,9 @@ router.post(
       success: true,
       message: finalized
         ? "Job fully completed."
-        : "Marked as done on your side. Waiting for the customer to rate and confirm.",
+        : booking.isGuest
+          ? "Job marked as done."
+          : "Marked as done on your side. Waiting for the customer to rate and confirm.",
       data: {
         bookingId: booking._id,
         status: booking.status,

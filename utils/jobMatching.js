@@ -430,11 +430,18 @@ export function sanitizeBookingForWorker(booking) {
  * Response shape for /api/worker-jobs/available (includes contact fields).
  */
 export function formatAvailableJobForWorker(booking, customer = null) {
+  const isGuest = Boolean(booking.isGuest);
+  const customerName =
+    booking.customerName?.trim() ||
+    customer?.fullName?.trim() ||
+    (isGuest ? "Guest" : "");
   return {
     id: booking._id?.toString ? booking._id.toString() : booking._id,
     serviceTitle: booking.serviceTitle,
     category: booking.category,
     serviceCategory: booking.serviceCategory,
+    customerName,
+    isGuest,
     phone: booking.phone || customer?.phone || "",
     location: getLocationLabel(booking),
     address: getLocationLabel(booking),
