@@ -1,5 +1,5 @@
 /** Customer-facing payment methods (bookings & advertisements). */
-export const PAYMENT_METHODS = ["jazzcash"];
+export const PAYMENT_METHODS = ["jazzcash", "bank-transfer"];
 
 export const PAY_AFTER_WORK_METHOD = "pay-after-work";
 
@@ -16,15 +16,20 @@ export function normalizePaymentMethod(method) {
   return String(method || "").trim().toLowerCase();
 }
 
-export function isWalletPaymentMethod(method) {
+export function isUpfrontPaymentMethod(method) {
   const m = normalizePaymentMethod(method);
-  return m === "easypaisa" || m === "jazzcash";
+  return m === "jazzcash" || m === "bank-transfer";
 }
 
-/** Receipt required only for wallet payments when paying upfront. */
+/** @deprecated */
+export function isWalletPaymentMethod(method) {
+  return isUpfrontPaymentMethod(method);
+}
+
+/** Receipt required for JazzCash / bank when paying upfront. */
 export function paymentReceiptRequired({ payAfterWork, paymentMethod }) {
   if (parsePayAfterWork(payAfterWork)) return false;
-  return isWalletPaymentMethod(paymentMethod);
+  return isUpfrontPaymentMethod(paymentMethod);
 }
 
 export function paymentMethodRequired({ payAfterWork }) {
@@ -39,8 +44,7 @@ export function validatePaymentSelection({ payAfterWork, paymentMethod }) {
   if (!pm || !PAYMENT_METHODS.includes(pm)) {
     return {
       ok: false,
-      message:
-        "Please select a payment method (JazzCash).",
+      message: "Please select a payment method (JazzCash or Bank transfer).",
     };
   }
   return { ok: true, method: pm };
@@ -53,6 +57,9 @@ export function buildPayToSummaryServer(method) {
   }
   if (m === "jazzcash") {
     return "JazzCash (platform wallet)";
+  }
+  if (m === "bank-transfer") {
+    return "Bank transfer (platform account)";
   }
   return "";
 }

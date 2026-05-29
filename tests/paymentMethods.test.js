@@ -29,11 +29,26 @@ describe("paymentMethods", () => {
     ).toBe(true);
   });
 
-  it("accepts jazzcash payment method", () => {
+  it("requires receipt for bank transfer upfront", () => {
+    expect(
+      paymentReceiptRequired({
+        payAfterWork: false,
+        paymentMethod: "bank-transfer",
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts jazzcash and bank-transfer", () => {
     expect(
       validatePaymentSelection({
         payAfterWork: false,
         paymentMethod: "jazzcash",
+      }).ok,
+    ).toBe(true);
+    expect(
+      validatePaymentSelection({
+        payAfterWork: false,
+        paymentMethod: "bank-transfer",
       }).ok,
     ).toBe(true);
   });
