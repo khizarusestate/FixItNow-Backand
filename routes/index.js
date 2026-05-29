@@ -14,6 +14,7 @@ import appReviewRoutes from './appReviews.js';
 import geocodeRoutes from './geocode.js';
 import auditLogsRoutes from './auditLogs.js';
 import pushRoutes from './push.js';
+import publicConfigRoutes from './publicConfig.js';
 
 const router = express.Router();
 
@@ -32,5 +33,6 @@ router.use('/advertisements', advertisementRoutes);
 router.use('/app-reviews', appReviewRoutes);
 router.use('/geocode', geocodeRoutes);
 router.use('/push', pushRoutes);
+router.use('/public', publicConfigRoutes);
 
 export default router;
