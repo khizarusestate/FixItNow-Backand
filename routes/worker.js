@@ -16,6 +16,7 @@ import { sendApiError, ERROR_CODES } from '../utils/apiErrors.js';
 import { BOOKING_ACTION, rejectBookingAction } from '../utils/bookingActions.js';
 import { applyLocationUpdate, formatLocationResponse, getLocationLabel } from '../utils/locationFields.js';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
+import { normalizeCnic } from '../utils/cnic.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -264,7 +265,7 @@ router.get('/profile', requireWorker, asyncHandler(async (req, res) => {
 // ─── PUT /api/worker/profile ──────────────────────────────────────────────────
 // Update current worker's profile
 router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
-  const { fullName, emailAddress, phoneNumber, primaryServiceCategory, serviceCategories, availability, profilePicture } = req.body;
+  const { fullName, emailAddress, phoneNumber, cnicNumber, primaryServiceCategory, serviceCategories, availability, profilePicture } = req.body;
 
   // Get current worker data for auto-fill
   const currentWorker = await Worker.findById(req.worker.id).select('fullName phoneNumber availability');
@@ -287,6 +288,21 @@ router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
     updateFields.emailAddress = email;
   }
   if (phoneNumber !== undefined) updateFields.phoneNumber = phoneNumber;
+  if (cnicNumber !== undefined) {
+    const normalized = normalizeCnic(cnicNumber);
+    if (!normalized) {
+      return res.status(400).json({ success: false, message: 'CNIC must be 13 digits.' });
+    }
+    const existingCnic = await Worker.findOne({
+      cnicNumber: normalized,
+      _id: { $ne: req.worker.id },
+      isDeleted: false,
+    });
+    if (existingCnic) {
+      return res.status(409).json({ success: false, message: 'CNIC already registered.' });
+    }
+    updateFields.cnicNumber = normalized;
+  }
   if (primaryServiceCategory !== undefined) updateFields.primaryServiceCategory = primaryServiceCategory;
   if (serviceCategories !== undefined) updateFields.serviceCategories = serviceCategories;
   applyLocationUpdate(updateFields, req.body);

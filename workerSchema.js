@@ -22,8 +22,22 @@ const workerSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
     minlength: 6,
+    required: function passwordRequired() {
+      return !this.googleId;
+    },
+  },
+  googleId: {
+    type: String,
+    default: null,
+    sparse: true,
+    unique: true,
+    trim: true,
+  },
+  authProvider: {
+    type: String,
+    enum: ["local", "google"],
+    default: "local",
   },
   serviceCategories: [
     {
@@ -44,9 +58,13 @@ const workerSchema = new mongoose.Schema({
   },
   cnicNumber: {
     type: String,
-    required: true,
     unique: true,
+    sparse: true,
     trim: true,
+    default: "",
+    required: function cnicRequired() {
+      return !this.googleId;
+    },
   },
   location: {
     type: String,

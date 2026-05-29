@@ -960,6 +960,13 @@ router.post(
         code: "ACCOUNT_NOT_FOUND",
       });
     }
+    if (!worker.password) {
+      return res.status(400).json({
+        success: false,
+        message: "This account uses Google sign-in. Please tap Continue with Google.",
+        code: "USE_GOOGLE_SIGNIN",
+      });
+    }
     if (!(await worker.comparePassword(password))) {
       return res.status(401).json({
         success: false,
@@ -1336,6 +1343,131 @@ router.post(
           success: true,
           message: "Signed in with Google.",
           customer: formatCustomerData(customer),
+        },
+      }),
+    );
+  }),
+);
+
+// ─── POST /api/auth/google/worker ─────────────────────────────────────────────
+router.post(
+  "/google/worker",
+  asyncHandler(async (req, res) => {
+    if (!isGoogleAuthEnabled()) {
+      return res.status(503).json({
+        success: false,
+        message: "Google sign-in is not configured on the server.",
+        code: "GOOGLE_NOT_CONFIGURED",
+      });
+    }
+
+    const { credential, rememberMe } = req.body;
+    if (!credential || typeof credential !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Google credential is required.",
+      });
+    }
+
+    const payload = await verifyGoogleIdToken(credential);
+    const email = String(payload.email).toLowerCase().trim();
+    const googleId = String(payload.sub);
+    const fullName =
+      String(payload.name || "").trim() ||
+      email.split("@")[0] ||
+      "Worker";
+
+    const existingCustomer = await Customer.findOne({
+      email,
+      isDeleted: false,
+    });
+    if (existingCustomer) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This email is registered as a customer. Use customer sign-in or a different email.",
+      });
+    }
+
+    let worker = await Worker.findOne({
+      $or: [{ googleId }, { emailAddress: email }],
+      isDeleted: false,
+    });
+
+    if (worker && worker.emailAddress !== email && worker.googleId !== googleId) {
+      return res.status(409).json({
+        success: false,
+        message: "This Google account cannot be linked. Contact support.",
+      });
+    }
+
+    if (!worker) {
+      worker = await Worker.create({
+        fullName,
+        emailAddress: email,
+        googleId,
+        authProvider: "google",
+        phoneNumber: "",
+        cnicNumber: "",
+        primaryServiceCategory: "Unspecified",
+        status: "not_approved",
+      });
+      emitNotification("workers", "created", `New worker joined: ${worker.fullName}`);
+      emitRefresh("workers");
+      notifyAllAdmins({
+        title: "New worker",
+        message: `${worker.fullName} signed up with Google.`,
+        type: "info",
+        relatedEntityId: worker._id,
+      }).catch(() => {});
+    } else {
+      if (!worker.googleId) {
+        worker.googleId = googleId;
+        worker.authProvider = "google";
+      }
+      if (!worker.fullName?.trim()) worker.fullName = fullName;
+      worker.lastActive = new Date();
+      await worker.save();
+    }
+
+    if (worker.isDisabled) {
+      return res.status(403).json({
+        success: false,
+        message: "Your worker account has been disabled.",
+      });
+    }
+    if (worker.status === "rejected") {
+      return res.status(403).json({
+        success: false,
+        message: "Your worker application was rejected.",
+      });
+    }
+
+    const tokenPayload = {
+      id: worker._id,
+      role: "worker",
+      email: worker.emailAddress,
+    };
+    const token = createToken(tokenPayload);
+
+    let refreshToken;
+    if (env.USE_REFRESH_TOKENS) {
+      refreshToken = await createRefreshToken(
+        worker._id,
+        "worker",
+        req,
+        refreshTokenExpiryDays(rememberMe),
+      );
+    }
+
+    return res.json(
+      attachAuthToResponse(res, {
+        accessToken: token,
+        refreshToken,
+        body: {
+          success: true,
+          message: "Signed in with Google.",
+          worker: formatWorkerData(worker),
         },
       }),
     );

@@ -317,17 +317,6 @@ router.post('/',
         type: 'booking',
       }).catch(() => {});
 
-      // Emit new booking event only to workers
-      const io = getSocketIO();
-      io.to('workers-room').emit('new-booking', {
-        id: booking._id,
-        serviceTitle: booking.serviceTitle,
-        category: booking.category,
-        address: booking.address,
-        price: booking.price,
-        createdAt: booking.createdAt
-      });
-
       return res.status(201).json({
         success: true,
         message: 'Booking created successfully',
@@ -570,6 +559,15 @@ router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
       rating,
       message: `Customer marked "${booking.serviceTitle}" as done. Please confirm from your dashboard.`,
     });
+    createNotification({
+      userId: worker._id,
+      userRole: 'worker',
+      title: 'Customer marked job done',
+      message: `Please confirm completion for ${booking.serviceTitle}.`,
+      type: 'urgent',
+      relatedEntityId: booking._id,
+      pushOptions: { urgency: 'high' },
+    }).catch(() => {});
     emitToUser(String(req.customer.id), 'booking-status-update', {
       bookingId: booking._id,
       serviceTitle: booking.serviceTitle,

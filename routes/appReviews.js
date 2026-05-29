@@ -32,6 +32,67 @@ async function checkProfileComplete(userId, userType) {
   return { complete: false, message: 'Invalid user type.' };
 }
 
+// ─── POST /api/app-reviews/guest ─────────────────────────────────────────────
+router.post('/guest', asyncHandler(async (req, res) => {
+  const { name, email, phone, rating, comment } = req.body;
+
+  const guestName = String(name || '').trim();
+  const guestEmail = String(email || '').trim().toLowerCase();
+
+  if (!guestName || guestName.length < 2) {
+    return res.status(400).json({ success: false, message: 'Please enter your name.' });
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(guestEmail)) {
+    return res.status(400).json({ success: false, message: 'Please enter a valid email.' });
+  }
+
+  if (!rating || rating < 1 || rating > 5) {
+    return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5 stars.' });
+  }
+
+  if (!comment || comment.trim().length === 0) {
+    return res.status(400).json({ success: false, message: 'Comment is required.' });
+  }
+
+  if (comment.length > 500) {
+    return res.status(400).json({ success: false, message: 'Comment must be 500 characters or less.' });
+  }
+
+  const review = await AppReview.create({
+    name: guestName,
+    email: guestEmail,
+    phone: String(phone || '').trim(),
+    rating,
+    comment: comment.trim(),
+    submitterId: null,
+    submitterType: 'guest',
+    submitterProfilePicture: null,
+    status: 'pending',
+  });
+
+  emitToAdmin('notification', {
+    type: 'reviews',
+    action: 'submitted',
+    message: `New guest app review from ${guestName}`,
+    timestamp: new Date().toISOString(),
+  });
+  emitToAdmin('refresh', { type: 'reviews', timestamp: new Date().toISOString() });
+  notifyAllAdmins({
+    title: 'New app review',
+    message: `${guestName} (guest) submitted a review.`,
+    type: 'info',
+    relatedEntityId: review._id,
+  }).catch(() => {});
+
+  return res.status(201).json({
+    success: true,
+    message: 'Thank you! Your review will appear after moderation.',
+    data: { id: review._id, status: review.status },
+  });
+}));
+
 // ─── POST /api/app-reviews ───────────────────────────────────────────────────
 // Submit a new app review (customer or worker)
 router.post('/', requireAuth, asyncHandler(async (req, res) => {
@@ -257,12 +318,14 @@ router.patch('/:id/status', requireAdmin, asyncHandler(async (req, res) => {
   // Notify submitter about approval/rejection (separate from account notifications)
   const statusMessage = `Your review has been ${status === 'approved' ? 'approved' : 'rejected'}.${adminNote ? ` Note: ${adminNote}` : ''}`;
 
-  emitToUser(String(review.submitterId), 'app-review-status-update', {
-    reviewId: review._id,
-    status: review.status,
-    adminNote: review.adminNote,
-    message: statusMessage,
-  });
+  if (review.submitterId && review.submitterType !== 'guest') {
+    emitToUser(String(review.submitterId), 'app-review-status-update', {
+      reviewId: review._id,
+      status: review.status,
+      adminNote: review.adminNote,
+      message: statusMessage,
+    });
+  }
 
   if (review.submitterId && review.submitterType) {
     await createNotification({

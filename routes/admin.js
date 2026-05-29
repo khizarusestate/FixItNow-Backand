@@ -39,6 +39,7 @@ import { applyLocationUpdate, formatLocationResponse, getLocationLabel } from '.
 import adminTeamRoutes from './adminTeam.js';
 import emailService from '../services/emailService.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
+import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
 import { pickBestWorkerForBooking, rankWorkersForBooking } from '../utils/workerRanking.js';
 import { attachAuthToResponse } from '../utils/attachAuthResponse.js';
 import { clearAuthCookies } from '../utils/authCookies.js';
@@ -614,6 +615,12 @@ router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res)
       serviceTitle: booking.serviceTitle,
       message: customerStatusNotification(status, booking.serviceTitle),
     });
+  }
+
+  if (status === 'approved' && previousStatus !== 'approved') {
+    notifyWorkersOfHighPriorityJob(booking.toObject?.() ? booking.toObject() : booking).catch(
+      () => {},
+    );
   }
 
   if (status === 'approved' && booking.customerId) {
