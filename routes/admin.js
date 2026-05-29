@@ -389,9 +389,37 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
     search,
     startDate,
     endDate,
+    paymentFilter,
   } = req.query;
 
   const query = { isDeleted: false };
+
+  const payAfterClause = {
+    $or: [
+      { "paymentDetails.payAfterWork": true },
+      { "paymentDetails.paymentMethod": "pay-after-work" },
+    ],
+  };
+
+  if (paymentFilter === "pay-after-received") {
+    query.$and = [
+      ...(query.$and || []),
+      payAfterClause,
+      { "paymentDetails.paymentReceived": true },
+    ];
+  } else if (paymentFilter === "pay-after-pending") {
+    query.$and = [
+      ...(query.$and || []),
+      payAfterClause,
+      { workerMarkedDone: true },
+      {
+        $or: [
+          { "paymentDetails.paymentReceived": false },
+          { "paymentDetails.paymentReceived": { $exists: false } },
+        ],
+      },
+    ];
+  }
 
   if (status) {
     if (status === 'assigned') {
@@ -470,6 +498,67 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
     },
   });
 }));
+
+// ─── PATCH /api/admin/bookings/:id/payment-received ─────────────────────────────
+router.patch(
+  '/bookings/:id/payment-received',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { paymentReceived } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking ID.' });
+    }
+
+    const booking = await Booking.findOne({ _id: req.params.id, isDeleted: false });
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    const pd = booking.paymentDetails || {};
+    const isPayAfter =
+      Boolean(pd.payAfterWork) ||
+      String(pd.paymentMethod || '').toLowerCase() === 'pay-after-work';
+
+    if (!isPayAfter) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment confirmation applies only to pay-after-work bookings.',
+      });
+    }
+
+    if (!booking.workerMarkedDone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Worker must mark the job as done before confirming payment.',
+      });
+    }
+
+    const received = paymentReceived === true || paymentReceived === 'true';
+    booking.paymentDetails.paymentReceived = received;
+    booking.paymentDetails.paymentReceivedAt = received ? new Date() : null;
+    booking.paymentDetails.paymentReceivedBy = received ? req.admin.id : null;
+    booking.timeline.push({
+      status: booking.status,
+      timestamp: new Date(),
+      note: received
+        ? 'Admin confirmed payment received from customer.'
+        : 'Admin cleared payment received flag.',
+    });
+    await booking.save();
+
+    emitRefresh('bookings');
+
+    return res.json({
+      success: true,
+      message: received ? 'Payment marked as received.' : 'Payment received flag cleared.',
+      data: {
+        id: booking._id,
+        paymentDetails: booking.paymentDetails,
+      },
+    });
+  }),
+);
 
 // ─── PATCH /api/admin/bookings/:id/status ─────────────────────────────────────
 router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res) => {

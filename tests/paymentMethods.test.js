@@ -15,12 +15,12 @@ describe("paymentMethods", () => {
     expect(
       paymentReceiptRequired({
         payAfterWork: true,
-        paymentMethod: "easypaisa",
+        paymentMethod: "jazzcash",
       }),
     ).toBe(false);
   });
 
-  it("requires receipt for wallet upfront", () => {
+  it("requires receipt for jazzcash upfront", () => {
     expect(
       paymentReceiptRequired({
         payAfterWork: false,
@@ -29,21 +29,27 @@ describe("paymentMethods", () => {
     ).toBe(true);
   });
 
-  it("does not require receipt for hand to hand", () => {
+  it("accepts jazzcash payment method", () => {
     expect(
-      paymentReceiptRequired({
+      validatePaymentSelection({
         payAfterWork: false,
-        paymentMethod: "hand-to-hand",
-      }),
-    ).toBe(false);
+        paymentMethod: "jazzcash",
+      }).ok,
+    ).toBe(true);
   });
 
-  it("accepts three payment methods", () => {
+  it("rejects removed payment methods", () => {
+    expect(
+      validatePaymentSelection({
+        payAfterWork: false,
+        paymentMethod: "easypaisa",
+      }).ok,
+    ).toBe(false);
     expect(
       validatePaymentSelection({
         payAfterWork: false,
         paymentMethod: "hand-to-hand",
       }).ok,
-    ).toBe(true);
+    ).toBe(false);
   });
 });

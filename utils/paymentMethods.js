@@ -1,5 +1,5 @@
 /** Customer-facing payment methods (bookings & advertisements). */
-export const PAYMENT_METHODS = ["easypaisa", "jazzcash", "hand-to-hand"];
+export const PAYMENT_METHODS = ["jazzcash"];
 
 export const PAY_AFTER_WORK_METHOD = "pay-after-work";
 
@@ -40,7 +40,7 @@ export function validatePaymentSelection({ payAfterWork, paymentMethod }) {
     return {
       ok: false,
       message:
-        "Please select a payment method (EasyPaisa, JazzCash, or Hand to hand).",
+        "Please select a payment method (JazzCash).",
     };
   }
   return { ok: true, method: pm };
@@ -51,14 +51,8 @@ export function buildPayToSummaryServer(method) {
   if (m === PAY_AFTER_WORK_METHOD) {
     return "Payment after work is completed";
   }
-  if (m === "easypaisa") {
-    return "EasyPaisa (platform wallet)";
-  }
   if (m === "jazzcash") {
     return "JazzCash (platform wallet)";
-  }
-  if (m === "hand-to-hand") {
-    return "Hand to hand (cash in person)";
   }
   return "";
 }

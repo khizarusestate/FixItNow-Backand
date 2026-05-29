@@ -51,6 +51,7 @@ import Customer from "./customerSchema.js";
 import Worker from "./workerSchema.js";
 import { cleanupLegacyMongoSuperAdmins } from "./services/envSuperAdmin.js";
 import { normalizeLegacyDbStatuses } from "./utils/dbNormalize.js";
+import { startPayAfterWorkReminderScheduler } from "./services/paymentReminderJob.js";
 
 import {
   initializeSocketIO,
@@ -541,6 +542,7 @@ async function startServer() {
     await connectDB(env.MONGODB_URI);
     await cleanupLegacyMongoSuperAdmins();
     await normalizeLegacyDbStatuses();
+    startPayAfterWorkReminderScheduler();
 
     httpServer.listen(PORT, () => {
       logger.info("Server started", {

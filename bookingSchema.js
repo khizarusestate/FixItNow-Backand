@@ -101,6 +101,16 @@ const bookingSchema = new mongoose.Schema(
       payAfterWork: { type: Boolean, default: false },
       /** Snapshot of pay-to instructions shown to the customer */
       payToSummary: { type: String, default: '', trim: true },
+      /** Admin confirmed customer paid (pay-after-work only) */
+      paymentReceived: { type: Boolean, default: false },
+      paymentReceivedAt: { type: Date, default: null },
+      paymentReceivedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Admin',
+        default: null,
+      },
+      /** One-shot reminder sent 24h after worker marked done without payment */
+      paymentReminderSentAt: { type: Date, default: null },
     },
     completedAt: {
       type: Date,

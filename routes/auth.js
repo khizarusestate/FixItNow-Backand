@@ -35,6 +35,10 @@ import { fileURLToPath } from "url";
 import { validateFile } from "../utils/fileValidation.js";
 import { profilePictureUpload } from "../utils/profilePictureMulter.js";
 import { CUSTOMER_STATUS, WORKER_STATUS } from "../utils/constants.js";
+import {
+  verifyGoogleIdToken,
+  isGoogleAuthEnabled,
+} from "../services/googleAuth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -243,6 +247,13 @@ router.post(
         success: false,
         message: "No account found for this email. Please sign up first.",
         code: "ACCOUNT_NOT_FOUND",
+      });
+    }
+    if (!customer.password) {
+      return res.status(400).json({
+        success: false,
+        message: "This account uses Google sign-in. Please tap Continue with Google.",
+        code: "USE_GOOGLE_SIGNIN",
       });
     }
     if (!(await customer.comparePassword(password))) {
@@ -1210,6 +1221,124 @@ router.delete(
       success: true,
       message: "Account and all related data deleted successfully.",
     });
+  }),
+);
+
+// ─── POST /api/auth/google/customer ───────────────────────────────────────────
+router.post(
+  "/google/customer",
+  asyncHandler(async (req, res) => {
+    if (!isGoogleAuthEnabled()) {
+      return res.status(503).json({
+        success: false,
+        message: "Google sign-in is not configured on the server.",
+        code: "GOOGLE_NOT_CONFIGURED",
+      });
+    }
+
+    const { credential, rememberMe } = req.body;
+    if (!credential || typeof credential !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Google credential is required.",
+      });
+    }
+
+    const payload = await verifyGoogleIdToken(credential);
+    const email = String(payload.email).toLowerCase().trim();
+    const googleId = String(payload.sub);
+    const fullName =
+      String(payload.name || "").trim() ||
+      email.split("@")[0] ||
+      "Customer";
+
+    const existingWorker = await Worker.findOne({
+      emailAddress: email,
+      isDeleted: false,
+    });
+    if (existingWorker) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This email is registered as a worker. Use worker sign-in or a different email.",
+      });
+    }
+
+    let customer = await Customer.findOne({
+      $or: [{ googleId }, { email }],
+      isDeleted: false,
+    });
+
+    if (customer && customer.email !== email && customer.googleId !== googleId) {
+      return res.status(409).json({
+        success: false,
+        message: "This Google account cannot be linked. Contact support.",
+      });
+    }
+
+    if (!customer) {
+      customer = await Customer.create({
+        fullName,
+        email,
+        googleId,
+        authProvider: "google",
+        phone: "",
+        status: "active",
+      });
+      emitNotification("customers", "created", `New customer joined: ${customer.fullName}`);
+      emitRefresh("customers");
+      notifyAllAdmins({
+        title: "New customer",
+        message: `${customer.fullName} signed up with Google.`,
+        type: "info",
+        relatedEntityId: customer._id,
+      }).catch(() => {});
+    } else {
+      if (!customer.googleId) {
+        customer.googleId = googleId;
+        customer.authProvider = "google";
+      }
+      if (!customer.fullName?.trim()) customer.fullName = fullName;
+      customer.lastActive = new Date();
+      if (customer.status !== "rejected") customer.status = "active";
+      await customer.save();
+    }
+
+    if (!customer.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been deactivated. Please contact support.",
+      });
+    }
+
+    const tokenPayload = {
+      id: customer._id,
+      role: "customer",
+      email: customer.email,
+    };
+    const token = createToken(tokenPayload);
+
+    let refreshToken;
+    if (env.USE_REFRESH_TOKENS) {
+      refreshToken = await createRefreshToken(
+        customer._id,
+        "customer",
+        req,
+        refreshTokenExpiryDays(rememberMe),
+      );
+    }
+
+    return res.json(
+      attachAuthToResponse(res, {
+        accessToken: token,
+        refreshToken,
+        body: {
+          success: true,
+          message: "Signed in with Google.",
+          customer: formatCustomerData(customer),
+        },
+      }),
+    );
   }),
 );
 

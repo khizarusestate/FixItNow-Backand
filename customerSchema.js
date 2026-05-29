@@ -17,12 +17,26 @@ const customerSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
     minlength: 6,
+    required: function passwordRequired() {
+      return !this.googleId;
+    },
+  },
+  googleId: {
+    type: String,
+    default: null,
+    sparse: true,
+    unique: true,
+    trim: true,
+  },
+  authProvider: {
+    type: String,
+    enum: ["local", "google"],
+    default: "local",
   },
   phone: {
     type: String,
-    required: true,
+    default: "",
     trim: true,
   },
   location: {
@@ -119,18 +133,20 @@ customerSchema.pre("save", async function (next) {
     this.location = label;
     this.address = label;
   }
-  if (this.isModified("password")) {
+  if (this.isModified("password") && this.password) {
     this.password = await bcrypt.hash(this.password, 12);
   }
   next();
 });
 
 customerSchema.methods.comparePassword = function (candidatePassword) {
+  if (!this.password) return Promise.resolve(false);
   return bcrypt.compare(candidatePassword, this.password);
 };
 
 // Database indexes for performance optimization
 customerSchema.index({ email: 1 }, { unique: true });
+customerSchema.index({ googleId: 1 }, { unique: true, sparse: true });
 customerSchema.index({ status: 1, createdAt: -1 });
 customerSchema.index({ isActive: 1, isDeleted: 1 });
 customerSchema.index({ createdAt: -1 });

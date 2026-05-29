@@ -93,7 +93,10 @@ export async function notifyAllAdmins({
 }) {
   try {
     const Admin = (await import("../models/Admin.js")).default;
-    const admins = await Admin.find({ isActive: true, role: "admin" })
+    const admins = await Admin.find({
+      isActive: true,
+      role: { $in: ["admin", "super_admin"] },
+    })
       .select("_id")
       .lean();
     const targetIds = admins.map((a) => String(a._id));
