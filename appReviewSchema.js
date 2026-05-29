@@ -4,13 +4,15 @@ const appReviewSchema = new mongoose.Schema(
   {
     submitterId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
+      required: false,
+      default: null,
       index: true,
     },
     submitterType: {
       type: String,
-      required: true,
-      enum: ["customer", "worker"],
+      required: false,
+      enum: ["customer", "worker", "guest"],
+      default: "guest",
     },
     name: {
       type: String,

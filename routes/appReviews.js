@@ -1,6 +1,7 @@
 import express from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAdmin } from '../middleware/auth.js';
+import { verifyToken } from '../utils/jwt.js';
 import AppReview from '../appReviewSchema.js';
 import Customer from '../customerSchema.js';
 import Worker from '../workerSchema.js';
@@ -33,10 +34,9 @@ async function checkProfileComplete(userId, userType) {
 }
 
 // ─── POST /api/app-reviews ───────────────────────────────────────────────────
-// Submit a new app review (customer or worker)
-router.post('/', requireAuth, asyncHandler(async (req, res) => {
-  const { rating, comment } = req.body;
-  const user = req.user;
+// Submit a new app review — works for logged-in users AND guests
+router.post('/', asyncHandler(async (req, res) => {
+  const { rating, comment, guestName, guestEmail, guestPhone } = req.body;
 
   if (!rating || rating < 1 || rating > 5) {
     return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5 stars.' });
@@ -50,45 +50,80 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Comment must be 500 characters or less.' });
   }
 
-  // Check profile completeness
-  const profileCheck = await checkProfileComplete(user.id, user.role);
-  if (!profileCheck.complete) {
-    return res.status(403).json({ success: false, message: profileCheck.message });
+  // Try to read auth token — optional for this endpoint
+  let reviewData = {};
+
+  const authHeader = req.headers['authorization'];
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (token) {
+    try {
+      const decoded = verifyToken(token);
+      if (decoded?.id && decoded?.role) {
+        const profileCheck = await checkProfileComplete(decoded.id, decoded.role);
+        if (profileCheck.complete) {
+          const u = profileCheck.user;
+          reviewData = {
+            name: u.fullName,
+            email: u.email || u.emailAddress,
+            phone: u.phone || u.phoneNumber || '',
+            submitterId: decoded.id,
+            submitterType: decoded.role,
+            submitterProfilePicture: u.profilePicture || null,
+          };
+        }
+      }
+    } catch {
+      // Token invalid/expired — treat as guest
+    }
   }
 
-  const profileUser = profileCheck.user;
+  // Guest path: require name + email in body
+  if (!reviewData.name) {
+    const name = (guestName || '').trim();
+    const email = (guestEmail || '').trim().toLowerCase();
+    if (!name || name.length < 2) {
+      return res.status(400).json({ success: false, message: 'Please provide your name.' });
+    }
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    if (!emailOk) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
+    }
+    reviewData = {
+      name,
+      email,
+      phone: (guestPhone || '').trim(),
+      submitterId: null,
+      submitterType: 'guest',
+      submitterProfilePicture: null,
+    };
+  }
 
   const review = await AppReview.create({
-    name: profileUser.fullName,
-    email: profileUser.email || profileUser.emailAddress,
-    phone: profileUser.phone || profileUser.phoneNumber || '',
+    ...reviewData,
     rating,
     comment: comment.trim(),
-    submitterId: user.id,
-    submitterType: user.role,
-    submitterProfilePicture: profileUser.profilePicture || null,
-    status: 'pending'
+    status: 'pending',
   });
 
   logger.info('App review submitted', {
     reviewId: review._id,
-    submitterId: user.id,
-    submitterType: user.role,
-    rating
+    submitterId: reviewData.submitterId,
+    submitterType: reviewData.submitterType,
+    rating,
   });
 
-  // Notify admin about new review
   emitToAdmin('notification', {
     type: 'reviews',
     action: 'submitted',
-    message: `New app review submitted by ${profileUser.fullName}`,
-    timestamp: new Date().toISOString()
+    message: `New app review submitted by ${reviewData.name}`,
+    timestamp: new Date().toISOString(),
   });
 
   emitToAdmin('refresh', { type: 'reviews', timestamp: new Date().toISOString() });
   notifyAllAdmins({
     title: 'New review submitted',
-    message: `New app review submitted by ${profileUser.fullName}.`,
+    message: `New app review submitted by ${reviewData.name}.`,
     type: 'info',
     relatedEntityId: review._id,
     link: '#reviews',
@@ -100,13 +135,11 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     data: {
       id: review._id,
       name: review.name,
-      email: review.email,
-      phone: review.phone,
       rating: review.rating,
       comment: review.comment,
       status: review.status,
-      createdAt: review.createdAt
-    }
+      createdAt: review.createdAt,
+    },
   });
 }));
 
