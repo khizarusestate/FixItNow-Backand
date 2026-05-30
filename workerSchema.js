@@ -50,6 +50,16 @@ const workerSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  primaryServiceName: {
+    type: String,
+    default: "",
+    trim: true,
+  },
+  primaryServiceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Service",
+    default: null,
+  },
   yearsOfExperience: {
     type: Number,
     default: 0,

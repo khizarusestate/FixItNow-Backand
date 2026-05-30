@@ -9,6 +9,8 @@ export const HIGH_PRIORITY_MIN_SCORE = 40;
 
 export function isHighPriorityJobForWorker(worker, booking) {
   const result = calculateRankScore(worker, booking);
+  const meta = result._matchMeta || {};
+  if (meta.exactService || meta.sameCategory) return true;
   return !result._demoted && result._matchScore >= HIGH_PRIORITY_MIN_SCORE;
 }
 
@@ -27,7 +29,7 @@ export async function notifyWorkersOfHighPriorityJob(booking) {
     status: { $in: ["approved", "active"] },
   })
     .select(
-      "primaryServiceCategory serviceCategories location serviceArea address latitude longitude",
+      "primaryServiceCategory primaryServiceName serviceCategories location serviceArea address latitude longitude",
     )
     .lean();
 

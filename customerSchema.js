@@ -59,6 +59,19 @@ const customerSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  isVerified: {
+    type: Boolean,
+    default: false,
+  },
+  emailVerificationCode: {
+    type: String,
+    default: null,
+    trim: true,
+  },
+  emailVerificationExpiresAt: {
+    type: Date,
+    default: null,
+  },
   profilePicture: {
     type: String,
     default: null,
@@ -105,6 +118,7 @@ const customerSchema = new mongoose.Schema({
       "rejected",
       "active",
       "inactive",
+      "pending-verification",
     ],
   },
   isDeleted: {

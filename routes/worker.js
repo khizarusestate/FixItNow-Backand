@@ -17,6 +17,7 @@ import { BOOKING_ACTION, rejectBookingAction } from '../utils/bookingActions.js'
 import { applyLocationUpdate, formatLocationResponse, getLocationLabel } from '../utils/locationFields.js';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
 import { normalizeCnic } from '../utils/cnic.js';
+import { resolveWorkerServiceFields } from '../utils/workerServiceFields.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,6 +74,8 @@ const toWorkerProfilePayload = (worker) => {
     phoneNumber: worker.phoneNumber,
     serviceCategory: worker.primaryServiceCategory,
     primaryServiceCategory: worker.primaryServiceCategory,
+    primaryServiceName: worker.primaryServiceName || '',
+    primaryServiceId: worker.primaryServiceId || null,
     serviceCategories: worker.serviceCategories,
     cnicNumber: worker.cnicNumber,
     ...loc,
@@ -303,7 +306,18 @@ router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
     }
     updateFields.cnicNumber = normalized;
   }
-  if (primaryServiceCategory !== undefined) updateFields.primaryServiceCategory = primaryServiceCategory;
+  if (primaryServiceCategory !== undefined || req.body.primaryServiceId !== undefined || req.body.primaryServiceName !== undefined) {
+    const serviceFields = await resolveWorkerServiceFields(req.body);
+    if (serviceFields.primaryServiceCategory) {
+      updateFields.primaryServiceCategory = serviceFields.primaryServiceCategory;
+    }
+    if (serviceFields.primaryServiceName !== undefined) {
+      updateFields.primaryServiceName = serviceFields.primaryServiceName;
+    }
+    if (serviceFields.primaryServiceId !== undefined) {
+      updateFields.primaryServiceId = serviceFields.primaryServiceId;
+    }
+  }
   if (serviceCategories !== undefined) updateFields.serviceCategories = serviceCategories;
   applyLocationUpdate(updateFields, req.body);
   if (profilePicture !== undefined) {

@@ -87,6 +87,23 @@ export const emailService = {
     );
   },
 
+  async sendEmailVerificationCode(user, code) {
+    const email = user.email;
+    const fullName = user.fullName;
+    const html = `
+      <p>Hi ${fullName || "there"},</p>
+      <p>Welcome to Fix It Now! Use the code below to verify your email:</p>
+      <p style="font-size: 1.25rem; font-weight: bold; margin: 1rem 0;">${code}</p>
+      <p>This code expires in 15 minutes.</p>
+      <p>If you did not create an account, please ignore this email.</p>
+    `;
+    return sendEmail({
+      to: email,
+      subject: "Verify your Fix It Now email",
+      html,
+    });
+  },
+
   async sendPasswordResetCode(user, code, role = "customer") {
     const email = role === "worker" ? user.emailAddress : user.email;
     const fullName = user.fullName;

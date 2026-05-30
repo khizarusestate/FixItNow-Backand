@@ -125,11 +125,17 @@ export function distanceKm(from, to) {
 }
 
 function expandWorkerServices(worker) {
-  const primary = normalizeServiceKey(worker.primaryServiceCategory);
+  const category = normalizeServiceKey(worker.primaryServiceCategory);
+  const serviceName = normalizeServiceKey(worker.primaryServiceName);
+  const composite =
+    category && serviceName
+      ? normalizeServiceKey(`${worker.primaryServiceCategory} - ${worker.primaryServiceName}`)
+      : "";
+  const primary = category || serviceName || composite;
   const extra = (worker.serviceCategories || [])
     .map(normalizeServiceKey)
     .filter(Boolean);
-  const base = [...new Set([primary, ...extra])].filter(Boolean);
+  const base = [...new Set([primary, category, serviceName, composite, ...extra])].filter(Boolean);
   const expanded = new Set(base);
   for (const key of base) {
     const synonyms = CATEGORY_SYNONYMS[key] || [];
@@ -152,17 +158,83 @@ function bookingServiceKeys(booking) {
  * Service relevance 0–100.
  */
 export function getServiceMatchScore(worker, booking) {
+  const workerCategory = normalizeServiceKey(worker.primaryServiceCategory);
+  const workerServiceName = normalizeServiceKey(worker.primaryServiceName);
+  const workerComposite =
+    workerCategory && workerServiceName
+      ? normalizeServiceKey(
+          `${worker.primaryServiceCategory} - ${worker.primaryServiceName}`,
+        )
+      : "";
+
+  const bookingTitle = normalizeServiceKey(booking.serviceTitle);
+  const bookingCategory = normalizeServiceKey(
+    booking.serviceCategory || booking.category,
+  );
+
+  if (workerServiceName && bookingTitle && workerServiceName === bookingTitle) {
+    return {
+      score: 100,
+      exactService: true,
+      sameCategory: true,
+      relatedService: false,
+      partialService: false,
+    };
+  }
+
+  if (
+    workerComposite &&
+    bookingTitle &&
+    (workerComposite === bookingTitle ||
+      bookingTitle.includes(workerServiceName))
+  ) {
+    return {
+      score: 100,
+      exactService: true,
+      sameCategory: true,
+      relatedService: false,
+      partialService: false,
+    };
+  }
+
+  if (
+    workerCategory &&
+    bookingCategory &&
+    workerCategory === bookingCategory
+  ) {
+    return {
+      score: 90,
+      exactService: false,
+      sameCategory: true,
+      relatedService: true,
+      partialService: false,
+    };
+  }
+
   const { primary, all } = expandWorkerServices(worker);
-  if (all.size === 0) return 0;
+  if (all.size === 0) return {
+    score: 0,
+    exactService: false,
+    sameCategory: false,
+    relatedService: false,
+    partialService: false,
+  };
 
   const keys = bookingServiceKeys(booking);
-  if (keys.length === 0) return 0;
+  if (keys.length === 0) return {
+    score: 0,
+    exactService: false,
+    sameCategory: false,
+    relatedService: false,
+    partialService: false,
+  };
 
   for (const key of keys) {
-    if (key === primary) {
+    if (key === primary || key === workerServiceName || key === workerComposite) {
       return {
         score: 100,
         exactService: true,
+        sameCategory: Boolean(workerCategory && bookingCategory && workerCategory === bookingCategory),
         relatedService: false,
         partialService: false,
       };
@@ -174,6 +246,7 @@ export function getServiceMatchScore(worker, booking) {
       return {
         score: 70,
         exactService: false,
+        sameCategory: false,
         relatedService: true,
         partialService: false,
       };
@@ -186,6 +259,7 @@ export function getServiceMatchScore(worker, booking) {
         return {
           score: 40,
           exactService: false,
+          sameCategory: false,
           relatedService: false,
           partialService: true,
         };
@@ -201,6 +275,7 @@ export function getServiceMatchScore(worker, booking) {
         return {
           score: 40,
           exactService: false,
+          sameCategory: false,
           relatedService: false,
           partialService: true,
         };
@@ -208,7 +283,6 @@ export function getServiceMatchScore(worker, booking) {
     }
   }
 
-  // Fallback fuzzy service token matching to catch slightly different naming conventions.
   const bookingTokens = keys
     .join(" ")
     .split(/\s+/)
@@ -221,6 +295,7 @@ export function getServiceMatchScore(worker, booking) {
         return {
           score: 40,
           exactService: false,
+          sameCategory: false,
           relatedService: false,
           partialService: true,
         };
@@ -231,6 +306,7 @@ export function getServiceMatchScore(worker, booking) {
   return {
     score: 0,
     exactService: false,
+    sameCategory: false,
     relatedService: false,
     partialService: false,
   };
@@ -304,6 +380,7 @@ export function getUrgencyScore(createdAt) {
 export function wouldDemoteJob(worker, booking, options = {}) {
   const maxRadiusKm = options.maxRadiusKm ?? DEFAULT_MAX_RADIUS_KM;
   const service = getServiceMatchScore(worker, booking);
+  if (service.exactService || service.sameCategory) return false;
   if (service.score === 0) return true;
 
   const workerCoords = getCoords(worker);
@@ -356,6 +433,7 @@ export function calculateRankScore(worker, booking, options = {}) {
       locationMode: location.locationMode,
       approximateLocation: location.approximateLocation,
       exactService: service.exactService,
+      sameCategory: service.sameCategory,
       relatedService: service.relatedService,
       partialService: service.partialService,
       sameCity: location.sameCity,
@@ -365,7 +443,17 @@ export function calculateRankScore(worker, booking, options = {}) {
   };
 }
 
+function matchTier(job) {
+  if (job._matchMeta?.exactService) return 3;
+  if (job._matchMeta?.sameCategory) return 2;
+  if (!job._demoted) return 1;
+  return 0;
+}
+
 function compareRankedJobs(a, b) {
+  const tierDiff = matchTier(b) - matchTier(a);
+  if (tierDiff !== 0) return tierDiff;
+
   const aDemoted = Boolean(a._demoted);
   const bDemoted = Boolean(b._demoted);
   if (aDemoted !== bDemoted) return aDemoted ? 1 : -1;

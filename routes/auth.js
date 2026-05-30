@@ -39,6 +39,7 @@ import {
   verifyGoogleIdToken,
   isGoogleAuthEnabled,
 } from "../services/googleAuth.js";
+import { resolveWorkerServiceFields } from "../utils/workerServiceFields.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,6 +74,8 @@ function formatWorkerData(worker) {
     cnicNumber: worker.cnicNumber,
     serviceCategory: worker.primaryServiceCategory,
     primaryServiceCategory: worker.primaryServiceCategory,
+    primaryServiceName: worker.primaryServiceName || "",
+    primaryServiceId: worker.primaryServiceId || null,
     serviceCategories: worker.serviceCategories,
     ...formatLocationResponse(worker),
     profilePicture: worker.profilePicture,
@@ -105,6 +108,19 @@ const emitRefresh = (type) => {
 const generateResetCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
+
+const generateVerificationCode = generateResetCode;
+
+async function sendVerificationEmailWithRetry(customer, code) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await emailService.sendEmailVerificationCode(customer, code);
+    if (result.success || result.skipped) return result;
+    if (attempt === 0) {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  return { success: false };
+}
 
 const findUserByEmail = async (email) => {
   const normalized = email.toLowerCase().trim();
@@ -169,14 +185,25 @@ router.post(
       });
     }
 
+    const verificationCode = generateVerificationCode();
+    const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
     const customer = await Customer.create({
       fullName,
       email,
       password,
       phone,
       location: location || "",
-      status: "active",
+      isVerified: false,
+      status: "pending-verification",
+      emailVerificationCode: verificationCode,
+      emailVerificationExpiresAt: verificationExpiresAt,
     });
+
+    const emailResult = await sendVerificationEmailWithRetry(
+      customer,
+      verificationCode,
+    );
 
     // Notify admin of new customer
     emitNotification(
@@ -194,8 +221,132 @@ router.post(
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully. You can log in now.",
+      message: emailResult.success
+        ? "Account created. Check your email for the 6-digit verification code."
+        : "Account created. We could not send the verification email — use Resend code on the next screen.",
+      requiresVerification: true,
+      email: customer.email,
       data: formatCustomerData(customer),
+    });
+  }),
+);
+
+// ─── POST /api/auth/verify-email ───────────────────────────────────────────────
+router.post(
+  "/verify-email",
+  asyncHandler(async (req, res) => {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and verification code are required.",
+      });
+    }
+
+    const customer = await Customer.findOne({
+      email: email.toLowerCase().trim(),
+      isDeleted: false,
+    });
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: "No account found for this email.",
+      });
+    }
+
+    if (customer.isVerified && customer.status !== "pending-verification") {
+      return res.json({
+        success: true,
+        message: "Email is already verified. You can log in.",
+      });
+    }
+
+    if (
+      !customer.emailVerificationCode ||
+      customer.emailVerificationCode !== String(code).trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid verification code.",
+      });
+    }
+
+    if (
+      customer.emailVerificationExpiresAt &&
+      customer.emailVerificationExpiresAt < new Date()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification code expired. Request a new code.",
+        code: "CODE_EXPIRED",
+      });
+    }
+
+    customer.isVerified = true;
+    customer.status = "active";
+    customer.emailVerificationCode = null;
+    customer.emailVerificationExpiresAt = null;
+    await customer.save();
+
+    emailService.sendCustomerSignup(customer).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: "Email verified successfully. You can log in now.",
+    });
+  }),
+);
+
+// ─── POST /api/auth/resend-verification ────────────────────────────────────────
+router.post(
+  "/resend-verification",
+  asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required.",
+      });
+    }
+
+    const customer = await Customer.findOne({
+      email: email.toLowerCase().trim(),
+      isDeleted: false,
+    });
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: "No account found for this email.",
+      });
+    }
+
+    if (customer.isVerified && customer.status !== "pending-verification") {
+      return res.json({
+        success: true,
+        message: "Email is already verified. You can log in.",
+      });
+    }
+
+    const verificationCode = generateVerificationCode();
+    customer.emailVerificationCode = verificationCode;
+    customer.emailVerificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await customer.save();
+
+    const emailResult = await sendVerificationEmailWithRetry(
+      customer,
+      verificationCode,
+    );
+    if (!emailResult.success && !emailResult.skipped) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Could not send verification email. Please try again in a moment.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Verification code sent. Check your inbox.",
     });
   }),
 );
@@ -261,6 +412,19 @@ router.post(
         success: false,
         message: "Incorrect password.",
         code: "INVALID_PASSWORD",
+      });
+    }
+
+    if (
+      customer.isVerified === false ||
+      customer.status === "pending-verification"
+    ) {
+      return res.status(403).json({
+        success: false,
+        code: "EMAIL_NOT_VERIFIED",
+        message:
+          "Please verify your email before logging in. Check your inbox for the 6-digit code.",
+        email: customer.email,
       });
     }
 
@@ -755,16 +919,21 @@ router.post(
       phoneNumber,
       cnicNumber,
       primaryServiceCategory,
+      primaryServiceId,
+      primaryServiceName,
       serviceCategories,
       serviceArea,
       location,
     } = req.body;
 
-    const effectiveLocation = (location || serviceArea || "").trim();
+    const serviceFields = await resolveWorkerServiceFields({
+      primaryServiceId,
+      primaryServiceName,
+      primaryServiceCategory,
+      serviceCategory: req.body.serviceCategory,
+    });
 
-    // Backward compatibility: accept serviceCategory if primaryServiceCategory is not provided
-    const effectivePrimaryCategory =
-      primaryServiceCategory || req.body.serviceCategory;
+    const effectivePrimaryCategory = serviceFields.primaryServiceCategory;
 
     if (
       !fullName ||
@@ -777,9 +946,11 @@ router.post(
       return res.status(400).json({
         success: false,
         message:
-          "Full name, email, password, phone, CNIC, and service category are required.",
+          "Full name, email, password, phone, CNIC, and service are required.",
       });
     }
+
+    const effectiveLocation = (location || serviceArea || "").trim();
 
     // Validate service category is not empty
     if (
@@ -862,7 +1033,9 @@ router.post(
       password,
       phoneNumber,
       cnicNumber: cnicStored,
-      primaryServiceCategory: effectivePrimaryCategory,
+      primaryServiceCategory: serviceFields.primaryServiceCategory,
+      primaryServiceName: serviceFields.primaryServiceName || "",
+      primaryServiceId: serviceFields.primaryServiceId || null,
       serviceCategories: [],
       location: effectiveLocation,
       serviceArea: effectiveLocation,
@@ -910,6 +1083,8 @@ router.post(
         cnicNumber: worker.cnicNumber,
         serviceCategory: worker.primaryServiceCategory,
         primaryServiceCategory: worker.primaryServiceCategory,
+        primaryServiceName: worker.primaryServiceName || "",
+        primaryServiceId: worker.primaryServiceId || null,
         serviceCategories: worker.serviceCategories,
         address: worker.address,
         status: worker.status,
@@ -1081,8 +1256,22 @@ router.put(
       updateFields.emailAddress = email;
     }
     if (phoneNumber !== undefined) updateFields.phoneNumber = phoneNumber;
-    if (primaryServiceCategory !== undefined)
-      updateFields.primaryServiceCategory = primaryServiceCategory;
+    if (
+      req.body.primaryServiceId !== undefined ||
+      req.body.primaryServiceName !== undefined ||
+      primaryServiceCategory !== undefined
+    ) {
+      const serviceFields = await resolveWorkerServiceFields(req.body);
+      if (serviceFields.primaryServiceCategory) {
+        updateFields.primaryServiceCategory = serviceFields.primaryServiceCategory;
+      }
+      if (serviceFields.primaryServiceName !== undefined) {
+        updateFields.primaryServiceName = serviceFields.primaryServiceName;
+      }
+      if (serviceFields.primaryServiceId !== undefined) {
+        updateFields.primaryServiceId = serviceFields.primaryServiceId;
+      }
+    }
     applyLocationUpdate(updateFields, req.body);
     if (profilePicture !== undefined)
       updateFields.profilePicture = profilePicture;
@@ -1290,6 +1479,7 @@ router.post(
         googleId,
         authProvider: "google",
         phone: "",
+        isVerified: true,
         status: "active",
       });
       emitNotification("customers", "created", `New customer joined: ${customer.fullName}`);
@@ -1306,6 +1496,7 @@ router.post(
         customer.authProvider = "google";
       }
       if (!customer.fullName?.trim()) customer.fullName = fullName;
+      customer.isVerified = true;
       customer.lastActive = new Date();
       if (customer.status !== "rejected") customer.status = "active";
       await customer.save();
