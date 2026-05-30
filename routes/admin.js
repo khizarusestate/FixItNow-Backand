@@ -40,6 +40,7 @@ import adminTeamRoutes from './adminTeam.js';
 import emailService from '../services/emailService.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
+import { cacheGetOrSet, cacheDelByPrefix } from '../utils/cache.js';
 import { pickBestWorkerForBooking, rankWorkersForBooking } from '../utils/workerRanking.js';
 import { attachAuthToResponse } from '../utils/attachAuthResponse.js';
 import { clearAuthCookies } from '../utils/authCookies.js';
@@ -344,6 +345,8 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
 
 // ─── GET /api/admin/summary ────────────────────────────────────────────────────
 router.get('/summary', requireAdmin, asyncHandler(async (req, res) => {
+  const adminId = String(req.admin?.id || 'global');
+  const { value } = await cacheGetOrSet(`fixitnow:admin:summary:${adminId}`, 30, async () => {
   const [totalBookings, pendingBookings, approvedBookings, totalWorkers, pendingWorkers, totalCustomers, totalServices, completedBookings] = await Promise.all([
     Booking.countDocuments({ isDeleted: false }),
     Booking.countDocuments({ status: 'pending', isDeleted: false }),
@@ -362,9 +365,7 @@ router.get('/summary', requireAdmin, asyncHandler(async (req, res) => {
   ]);
   const revenue = revenueAgg[0]?.totalRevenue || 0;
 
-  return res.json({
-    success: true,
-    data: {
+  return {
       totalBookings,
       pendingBookings,
       approvedBookings,
@@ -375,7 +376,12 @@ router.get('/summary', requireAdmin, asyncHandler(async (req, res) => {
       services: totalServices,
       revenue,
       recentBookings: []
-    }
+    };
+  });
+
+  return res.json({
+    success: true,
+    data: value,
   });
 }));
 
@@ -602,6 +608,7 @@ router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res)
   await booking.save();
 
   emitRefresh('bookings');
+  cacheDelByPrefix('fixitnow:admin:summary').catch(() => {});
 
   if (status === 'completed') {
     emitNotification('bookings', 'completed', `Booking ${booking._id?.slice(-8)?.toUpperCase()} has been completed`);

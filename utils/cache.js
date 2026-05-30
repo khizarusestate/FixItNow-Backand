@@ -1,263 +1,248 @@
-import Redis from 'ioredis';
-import logger from './logger.js';
+import logger from "./logger.js";
+import env from "./env.js";
+
+/** In-memory fallback when Redis is unavailable (single-instance). */
+const memoryStore = new Map();
+const MEMORY_MAX = 500;
 
 let redisClient = null;
+let redisReady = false;
 
-/**
- * Initialize Redis connection
- * @returns {Promise<Redis|null>}
- */
+function memoryGet(key) {
+  const entry = memoryStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt && Date.now() > entry.expiresAt) {
+    memoryStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function memorySet(key, value, ttlSeconds) {
+  if (memoryStore.size >= MEMORY_MAX) {
+    const first = memoryStore.keys().next().value;
+    if (first) memoryStore.delete(first);
+  }
+  memoryStore.set(key, {
+    value,
+    expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null,
+  });
+}
+
 export async function initRedis() {
-  if (redisClient && redisClient.status === 'ready') {
+  if (redisClient && redisReady) {
     return redisClient;
   }
 
-  const redisUrl = process.env.REDIS_URL;
-  const redisPassword = process.env.REDIS_PASSWORD;
-
-  if (!redisUrl) {
-    logger.warn('Redis URL not configured. Caching will be disabled.');
+  const url = String(env.REDIS_URL || process.env.REDIS_URL || "").trim();
+  if (!url) {
+    logger.info("Cache: in-memory mode (set REDIS_URL for Redis)");
     return null;
   }
 
   try {
-    redisClient = new Redis(redisUrl, {
-      password: redisPassword,
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      maxRetriesPerRequest: 3,
+    const { default: Redis } = await import("ioredis");
+    redisClient = new Redis(url, {
+      password: env.REDIS_PASSWORD || process.env.REDIS_PASSWORD || undefined,
+      maxRetriesPerRequest: 2,
       enableReadyCheck: true,
+      lazyConnect: true,
+      retryStrategy: (times) => Math.min(times * 50, 2000),
     });
 
-    redisClient.on('connect', () => {
-      logger.info('Redis connected successfully');
+    redisClient.on("error", (err) => {
+      logger.warn("Redis connection error", { error: err?.message });
     });
 
-    redisClient.on('error', (err) => {
-      logger.error('Redis connection error:', err);
-    });
-
-    redisClient.on('close', () => {
-      logger.warn('Redis connection closed');
-    });
-
-    // Test connection
+    await redisClient.connect();
     await redisClient.ping();
-    logger.info('Redis connection test successful');
-    
+    redisReady = true;
+    logger.info("Cache: Redis connected");
     return redisClient;
-  } catch (error) {
-    logger.error('Failed to initialize Redis:', error);
+  } catch (err) {
+    logger.warn("Cache: Redis unavailable, using in-memory", {
+      error: err?.message,
+    });
     redisClient = null;
+    redisReady = false;
     return null;
   }
 }
 
-/**
- * Get Redis client instance
- * @returns {Redis|null}
- */
+/** Alias used by index.js startup. */
+export const initCache = initRedis;
+
 export function getRedisClient() {
   return redisClient;
 }
 
-/**
- * Check if Redis is available
- * @returns {boolean}
- */
 export function isRedisAvailable() {
-  return redisClient && redisClient.status === 'ready';
+  return redisReady;
 }
 
-/**
- * Set cache with TTL
- * @param {string} key - Cache key
- * @param {any} value - Value to cache (will be JSON stringified)
- * @param {number} ttlSeconds - Time to live in seconds
- * @returns {Promise<boolean>}
- */
-export async function setCache(key, value, ttlSeconds = 3600) {
-  if (!isRedisAvailable()) {
-    return false;
-  }
-
-  try {
-    const serializedValue = JSON.stringify(value);
-    await redisClient.setex(key, ttlSeconds, serializedValue);
-    return true;
-  } catch (error) {
-    logger.error(`Error setting cache for key ${key}:`, error);
-    return false;
-  }
+export function isRedisConnected() {
+  return redisReady;
 }
 
-/**
- * Get cached value
- * @param {string} key - Cache key
- * @returns {Promise<any|null>}
- */
 export async function getCache(key) {
-  if (!isRedisAvailable()) {
-    return null;
-  }
-
   try {
-    const value = await redisClient.get(key);
-    if (value === null) {
-      return null;
+    if (redisReady && redisClient) {
+      const raw = await redisClient.get(key);
+      return raw ? JSON.parse(raw) : null;
     }
-    return JSON.parse(value);
-  } catch (error) {
-    logger.error(`Error getting cache for key ${key}:`, error);
-    return null;
+    return memoryGet(key);
+  } catch (err) {
+    logger.warn("getCache failed", { key, error: err?.message });
+    return memoryGet(key);
   }
 }
 
-/**
- * Delete cache key
- * @param {string} key - Cache key
- * @returns {Promise<boolean>}
- */
+export async function cacheGet(key) {
+  return getCache(key);
+}
+
+export async function setCache(key, value, ttlSeconds = 3600) {
+  try {
+    const payload = JSON.stringify(value);
+    if (redisReady && redisClient) {
+      await redisClient.set(key, payload, "EX", ttlSeconds);
+      return true;
+    }
+    memorySet(key, value, ttlSeconds);
+    return true;
+  } catch (err) {
+    logger.warn("setCache failed", { key, error: err?.message });
+    memorySet(key, value, ttlSeconds);
+    return false;
+  }
+}
+
+export async function cacheSet(key, value, ttlSeconds = 60) {
+  return setCache(key, value, ttlSeconds);
+}
+
 export async function deleteCache(key) {
-  if (!isRedisAvailable()) {
-    return false;
-  }
-
   try {
-    await redisClient.del(key);
+    if (redisReady && redisClient) {
+      await redisClient.del(key);
+    }
+    memoryStore.delete(key);
     return true;
-  } catch (error) {
-    logger.error(`Error deleting cache for key ${key}:`, error);
+  } catch {
+    memoryStore.delete(key);
     return false;
   }
 }
 
-/**
- * Delete multiple cache keys by pattern
- * @param {string} pattern - Cache key pattern (e.g., "services:*")
- * @returns {Promise<number>} Number of keys deleted
- */
+export async function cacheDel(key) {
+  return deleteCache(key);
+}
+
+async function deleteKeysByPrefix(prefix) {
+  for (const key of [...memoryStore.keys()]) {
+    if (key.startsWith(prefix)) memoryStore.delete(key);
+  }
+
+  if (!redisReady || !redisClient) return 0;
+
+  let deleted = 0;
+  try {
+    let cursor = "0";
+    do {
+      const [next, keys] = await redisClient.scan(
+        cursor,
+        "MATCH",
+        `${prefix}*`,
+        "COUNT",
+        50,
+      );
+      cursor = next;
+      if (keys.length) {
+        await redisClient.del(...keys);
+        deleted += keys.length;
+      }
+    } while (cursor !== "0");
+  } catch (err) {
+    logger.warn("deleteKeysByPrefix failed", { prefix, error: err?.message });
+  }
+  return deleted;
+}
+
 export async function deleteCachePattern(pattern) {
-  if (!isRedisAvailable()) {
-    return 0;
-  }
-
-  try {
-    const keys = await redisClient.keys(pattern);
-    if (keys.length === 0) {
-      return 0;
-    }
-    await redisClient.del(keys);
-    return keys.length;
-  } catch (error) {
-    logger.error(`Error deleting cache pattern ${pattern}:`, error);
-    return 0;
-  }
+  const prefix = pattern.endsWith("*") ? pattern.slice(0, -1) : pattern;
+  return deleteKeysByPrefix(prefix);
 }
 
-/**
- * Set cache with hash structure for complex objects
- * @param {string} key - Cache key
- * @param {object} fields - Object fields to cache
- * @param {number} ttlSeconds - Time to live in seconds
- * @returns {Promise<boolean>}
- */
-export async function setCacheHash(key, fields, ttlSeconds = 3600) {
-  if (!isRedisAvailable()) {
-    return false;
-  }
-
-  try {
-    await redisClient.hset(key, fields);
-    await redisClient.expire(key, ttlSeconds);
-    return true;
-  } catch (error) {
-    logger.error(`Error setting cache hash for key ${key}:`, error);
-    return false;
-  }
+export async function cacheDelByPrefix(prefix) {
+  return deleteKeysByPrefix(prefix);
 }
 
-/**
- * Get cache hash
- * @param {string} key - Cache key
- * @returns {Promise<object|null>}
- */
-export async function getCacheHash(key) {
-  if (!isRedisAvailable()) {
-    return null;
-  }
-
-  try {
-    const value = await redisClient.hgetall(key);
-    if (Object.keys(value).length === 0) {
-      return null;
-    }
-    return value;
-  } catch (error) {
-    logger.error(`Error getting cache hash for key ${key}:`, error);
-    return null;
-  }
-}
-
-/**
- * Increment counter in cache
- * @param {string} key - Cache key
- * @param {number} increment - Amount to increment (default: 1)
- * @returns {Promise<number|null>} New value
- */
-export async function incrementCache(key, increment = 1) {
-  if (!isRedisAvailable()) {
-    return null;
-  }
-
-  try {
-    return await redisClient.incrby(key, increment);
-  } catch (error) {
-    logger.error(`Error incrementing cache for key ${key}:`, error);
-    return null;
-  }
-}
-
-/**
- * Get or set cache pattern
- * @param {string} key - Cache key
- * @param {Function} fetchFn - Function to fetch data if cache miss
- * @param {number} ttlSeconds - Time to live in seconds
- * @returns {Promise<any>}
- */
 export async function getOrSetCache(key, fetchFn, ttlSeconds = 3600) {
   const cached = await getCache(key);
-  if (cached !== null) {
+  if (cached !== null && cached !== undefined) {
     return cached;
   }
-
   const data = await fetchFn();
   if (data !== null && data !== undefined) {
     await setCache(key, data, ttlSeconds);
   }
-  
   return data;
 }
 
-/**
- * Close Redis connection
- * @returns {Promise<void>}
- */
-export async function closeRedis() {
-  if (redisClient) {
-    await redisClient.quit();
-    redisClient = null;
-    logger.info('Redis connection closed');
+export async function cacheGetOrSet(key, ttlSeconds, factory) {
+  const cached = await getCache(key);
+  if (cached !== null && cached !== undefined) {
+    return { value: cached, hit: true };
+  }
+  const value = await factory();
+  await setCache(key, value, ttlSeconds);
+  return { value, hit: false };
+}
+
+export async function setCacheHash(key, fields, ttlSeconds = 3600) {
+  if (!redisReady || !redisClient) return false;
+  try {
+    await redisClient.hset(key, fields);
+    await redisClient.expire(key, ttlSeconds);
+    return true;
+  } catch (err) {
+    logger.warn("setCacheHash failed", { key, error: err?.message });
+    return false;
   }
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  await closeRedis();
-});
+export async function getCacheHash(key) {
+  if (!redisReady || !redisClient) return null;
+  try {
+    const value = await redisClient.hgetall(key);
+    return Object.keys(value).length === 0 ? null : value;
+  } catch (err) {
+    logger.warn("getCacheHash failed", { key, error: err?.message });
+    return null;
+  }
+}
 
-process.on('SIGINT', async () => {
-  await closeRedis();
-});
+export async function incrementCache(key, increment = 1) {
+  if (!redisReady || !redisClient) return null;
+  try {
+    return await redisClient.incrby(key, increment);
+  } catch (err) {
+    logger.warn("incrementCache failed", { key, error: err?.message });
+    return null;
+  }
+}
+
+export async function closeRedis() {
+  if (redisClient) {
+    try {
+      await redisClient.quit();
+    } catch {
+      /* ignore */
+    }
+  }
+  redisClient = null;
+  redisReady = false;
+  logger.info("Redis connection closed");
+}
+
+export const closeCache = closeRedis;

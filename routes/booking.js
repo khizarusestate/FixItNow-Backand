@@ -9,6 +9,7 @@ import Customer from '../customerSchema.js';
 import Worker from '../workerSchema.js';
 import mongoose from 'mongoose';
 import { getSocketIO, emitToAdmin, emitToUser } from '../utils/socketManager.js';
+import { cacheDelByPrefix } from '../utils/cache.js';
 import logger from '../utils/logger.js';
 import { sendApiError, ERROR_CODES } from '../utils/apiErrors.js';
 import {
@@ -405,29 +406,67 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
     return;
   }
 
-  // Soft delete the booking
-  await Booking.findByIdAndUpdate(req.params.id, {
-    isDeleted: true,
-    deletedAt: new Date(),
-    status: 'cancelled'
-  });
+  const previousStatus = booking.status;
 
-  // Get current customer stats to prevent negative values
+  booking.status = 'cancelled';
+  booking.timeline.push({
+    status: 'cancelled',
+    timestamp: new Date(),
+    note: 'Cancelled by customer',
+  });
+  await booking.save();
+
   const customer = await Customer.findById(req.customer.id);
   if (customer) {
     const updateFields = {};
-    if (customer.totalBookings > 0) {
-      updateFields.totalBookings = -1;
-    }
-    if (customer.pendingBookings > 0) {
+    if (customer.totalBookings > 0) updateFields.totalBookings = -1;
+    if (customer.pendingBookings > 0 && previousStatus === 'pending') {
       updateFields.pendingBookings = -1;
     }
-    
     if (Object.keys(updateFields).length > 0) {
-      await Customer.findByIdAndUpdate(req.customer.id, {
-        $inc: updateFields
-      });
+      await Customer.findByIdAndUpdate(req.customer.id, { $inc: updateFields });
     }
+  }
+
+  emitRefresh('bookings');
+  cacheDelByPrefix('fixitnow:admin:summary').catch(() => {});
+  cacheDelByPrefix('fixitnow:public:services').catch(() => {});
+  emitNotification(
+    'bookings',
+    'cancelled',
+    `Booking cancelled: ${booking.serviceTitle} by ${booking.customerName}`,
+  );
+
+  notifyAllAdmins({
+    title: 'Booking cancelled',
+    message: `${booking.customerName} cancelled ${booking.serviceTitle}.`,
+    type: 'warning',
+    relatedEntityId: booking._id,
+  }).catch(() => {});
+
+  const cancelPayload = {
+    bookingId: booking._id,
+    status: 'cancelled',
+    previousStatus,
+    serviceTitle: booking.serviceTitle,
+    message: `Your booking for ${booking.serviceTitle} was cancelled.`,
+  };
+
+  emitToUser(String(req.customer.id), 'booking-status-update', cancelPayload);
+
+  if (booking.workerId) {
+    emitToUser(String(booking.workerId), 'booking-status-update', {
+      ...cancelPayload,
+      message: `${booking.serviceTitle} was cancelled by the customer.`,
+    });
+    createNotification({
+      userId: booking.workerId,
+      userRole: 'worker',
+      title: 'Booking cancelled',
+      message: `${booking.serviceTitle} was cancelled by the customer.`,
+      type: 'warning',
+      relatedEntityId: booking._id,
+    }).catch(() => {});
   }
 
   createNotification({
@@ -436,9 +475,18 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
     title: 'Booking cancelled',
     message: `Your booking for ${booking.serviceTitle} was cancelled.`,
     type: 'warning',
+    relatedEntityId: booking._id,
   }).catch(() => {});
 
-  return res.json({ success: true, message: 'Booking cancelled successfully.' });
+  return res.json({
+    success: true,
+    message: 'Booking cancelled successfully.',
+    data: {
+      id: booking._id,
+      status: 'cancelled',
+      serviceTitle: booking.serviceTitle,
+    },
+  });
 }));
 
 // ─── POST /api/bookings/:id/complete ───────────────────────────────────────────

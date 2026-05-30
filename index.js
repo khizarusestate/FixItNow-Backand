@@ -52,6 +52,7 @@ import Worker from "./workerSchema.js";
 import { cleanupLegacyMongoSuperAdmins } from "./services/envSuperAdmin.js";
 import { normalizeLegacyDbStatuses } from "./utils/dbNormalize.js";
 import { startPayAfterWorkReminderScheduler } from "./services/paymentReminderJob.js";
+import { initCache, closeCache } from "./utils/cache.js";
 
 import {
   initializeSocketIO,
@@ -474,7 +475,11 @@ app.use(
       return res.status(401).json({ success: false, message: "Invalid token." });
     }
   },
-  express.static(path.join(__dirname, "uploads")),
+  express.static(path.join(__dirname, "uploads"), {
+    maxAge: process.env.NODE_ENV === "production" ? "7d" : 0,
+    etag: true,
+    lastModified: true,
+  }),
 );
 
 // ─── Rate Limit ──────────────────────────────────────────────────────────────
@@ -540,6 +545,7 @@ async function startServer() {
     }
 
     await connectDB(env.MONGODB_URI);
+    await initCache();
     await cleanupLegacyMongoSuperAdmins();
     await normalizeLegacyDbStatuses();
     startPayAfterWorkReminderScheduler();
@@ -560,12 +566,14 @@ async function startServer() {
 
 // ─── Shutdown ────────────────────────────────────────────────────────────────
 process.on("SIGINT", async () => {
+  await closeCache();
   await mongoose.connection.close();
   io.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
+  await closeCache();
   await mongoose.connection.close();
   io.close();
   process.exit(0);
