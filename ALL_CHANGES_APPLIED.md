@@ -1,6 +1,6 @@
 # All changes applied — Backend API
 
-Verified and synced to `origin/main`.
+Verified and synced to `origin/main`. Build fix: removed accidental repo files (`how --stat...`), single `ioredis` dep, clean `package-lock.json`.
 
 - Redis `cache.js` + `cacheGetOrSet` (public services, admin summary)
 - `middleware/cacheMiddleware.js`
