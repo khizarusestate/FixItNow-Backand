@@ -79,19 +79,30 @@ export const emailService = {
     );
   },
 
-  /** Account disabled, deleted, or status change */
-  async sendWorkerAccountStatus(worker, status, reason = "") {
-    const messages = {
-      inactive:
-        "Your account has been set to inactive. Contact support if this is unexpected.",
-      active: "Your worker account is active again.",
-      deleted: "Your worker account has been deleted from Fix It Now.",
-      disabled: "Your worker account has been disabled.",
-    };
-    const html = `<p>Hi ${worker.fullName},</p><p>${messages[status] || reason || `Account status: ${status}`}</p>`;
+  /** Account disabled by admin */
+  async sendAccountDisabled(worker) {
+    const html = `
+      <p>Hi ${worker.fullName},</p>
+      <p>Your Fix It Now worker account has been disabled by an administrator.</p>
+      <p>If you believe this is a mistake, please contact support.</p>
+    `;
     return sendPlainEmail(
       worker.emailAddress,
-      `Fix It Now — account update`,
+      "Fix It Now — account disabled",
+      html,
+    );
+  },
+
+  /** Account deleted by admin */
+  async sendAccountDeleted(worker) {
+    const html = `
+      <p>Hi ${worker.fullName},</p>
+      <p>Your Fix It Now worker account has been deleted.</p>
+      <p>If you need assistance, please contact support.</p>
+    `;
+    return sendPlainEmail(
+      worker.emailAddress,
+      "Fix It Now — account deleted",
       html,
     );
   },

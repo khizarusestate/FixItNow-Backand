@@ -137,7 +137,7 @@ router.get(
     }
 
     const allApprovedBookings = await Booking.find({
-      status: "approved",
+      status: { $in: OPEN_STATUSES },
       workerId: null,
       isDeleted: false,
     })

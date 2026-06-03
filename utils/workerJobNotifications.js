@@ -18,7 +18,11 @@ export function isHighPriorityJobForWorker(worker, booking) {
  * Notify workers with a strong match when a booking becomes available (approved, unassigned).
  */
 export async function notifyWorkersOfHighPriorityJob(booking) {
-  if (!booking || booking.workerId || booking.status !== "approved") {
+  if (!booking || booking.workerId) {
+    return;
+  }
+  const openStatuses = ["open", "approved", "pending"];
+  if (!openStatuses.includes(booking.status)) {
     return;
   }
 
@@ -26,7 +30,7 @@ export async function notifyWorkersOfHighPriorityJob(booking) {
     isDeleted: false,
     isDisabled: { $ne: true },
     availability: true,
-    status: { $in: ["approved", "active"] },
+    status: { $in: ["approved", "active", "inactive"] },
   })
     .select(
       "primaryServiceCategory primaryServiceName serviceCategories location serviceArea address latitude longitude",

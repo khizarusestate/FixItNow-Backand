@@ -99,6 +99,10 @@ const sanitizeWorker = (worker) => {
     serviceCategories: data.serviceCategories,
     ...formatLocationResponse(data),
     profilePicture: data.profilePicture,
+    verificationPhoto: data.verificationPhoto || null,
+    firstName: data.firstName || '',
+    lastName: data.lastName || '',
+    signupStep: data.signupStep || '',
     availability: data.availability ?? true,
     status: data.status,
     isDisabled: data.isDisabled ?? false,
@@ -1276,7 +1280,10 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
   }
 
   const updateFields = {};
-  if (normalizedStatus) updateFields.status = normalizedStatus;
+  if (normalizedStatus) {
+    updateFields.status =
+      normalizedStatus === 'approved' ? WORKER_STATUS.ACTIVE : normalizedStatus;
+  }
   if (isDisabled !== undefined) updateFields.isDisabled = Boolean(isDisabled);
   const worker = await Worker.findByIdAndUpdate(req.params.id, updateFields, { new: true }).select('-password');
   if (!worker) {
@@ -1309,7 +1316,6 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
       message: 'Your worker account application has been rejected. Please contact support for more information.',
       rejectedAt: new Date().toISOString()
     });
-    emailService.sendWorkerAccountStatus(worker, "rejected").catch(() => {});
     createNotification({
       userId: worker._id,
       userRole: 'worker',
@@ -1317,22 +1323,18 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
       message: 'Your worker application was rejected. Contact support for help.',
       type: 'warning',
     }).catch(() => {});
-  } else if (isDisabled === true || normalizedStatus === WORKER_STATUS.INACTIVE) {
-    if (isDisabled === true) {
-      emitToUser(String(worker._id), 'account-deleted', {
-        message: 'Your worker account has been disabled by an administrator.',
-      });
-      emailService.sendWorkerAccountStatus(worker, 'inactive').catch(() => {});
-      createNotification({
-        userId: worker._id,
-        userRole: 'worker',
-        title: 'Account disabled',
-        message: 'Your worker account was disabled by an administrator.',
-        type: 'warning',
-      }).catch(() => {});
-    }
-  } else if (status === 'active') {
-    emailService.sendWorkerAccountStatus(worker, 'active').catch(() => {});
+  } else if (isDisabled === true) {
+    emitToUser(String(worker._id), 'account-deleted', {
+      message: 'Your worker account has been disabled by an administrator.',
+    });
+    emailService.sendAccountDisabled(worker).catch(() => {});
+    createNotification({
+      userId: worker._id,
+      userRole: 'worker',
+      title: 'Account disabled',
+      message: 'Your worker account was disabled by an administrator.',
+      type: 'warning',
+    }).catch(() => {});
   }
   emitWorkerProfileUpdate(worker);
   
@@ -1483,7 +1485,7 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   });
 
   emitRefresh('workers');
-  emailService.sendWorkerAccountStatus(worker, 'deleted').catch(() => {});
+  emailService.sendAccountDeleted(worker).catch(() => {});
 
   await logAudit(req, 'worker_delete', 'worker', workerId, {
     fullName: worker.fullName,

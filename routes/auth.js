@@ -146,6 +146,12 @@ const generateResetCode = () => {
 const generateVerificationCode = generateResetCode;
 const VERIFY_EMAIL_COOLDOWN_SEC = 60;
 
+function readGoogleCredential(body = {}) {
+  const raw = body.credential ?? body.idToken ?? body.token;
+  if (typeof raw !== "string") return "";
+  return raw.trim();
+}
+
 async function sendVerificationEmailWithRetry(customer, code) {
   const jobId = await addEmailJob({
     type: "email_verification",
@@ -1714,11 +1720,13 @@ router.post(
       });
     }
 
-    const { credential, rememberMe } = req.body;
-    if (!credential || typeof credential !== "string") {
+    const { rememberMe } = req.body;
+    const credential = readGoogleCredential(req.body);
+    if (!credential) {
       return res.status(400).json({
         success: false,
         message: "Google credential is required.",
+        code: "GOOGLE_CREDENTIAL_REQUIRED",
       });
     }
 
@@ -1844,11 +1852,13 @@ router.post(
       });
     }
 
-    const { credential, rememberMe } = req.body;
-    if (!credential || typeof credential !== "string") {
+    const { rememberMe } = req.body;
+    const credential = readGoogleCredential(req.body);
+    if (!credential) {
       return res.status(400).json({
         success: false,
         message: "Google credential is required.",
+        code: "GOOGLE_CREDENTIAL_REQUIRED",
       });
     }
 

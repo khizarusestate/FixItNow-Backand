@@ -16,6 +16,7 @@ import {
 import { finalizeBookingCompletion } from '../utils/bookingCompletion.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 import { BOOKING_STATUS } from '../utils/constants.js';
+import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
 
 const router = express.Router();
 
@@ -187,6 +188,10 @@ router.post('/',
         message: `${booking.customerName} booked ${booking.serviceTitle}.`,
         type: 'booking',
       }).catch(() => {});
+
+      notifyWorkersOfHighPriorityJob(
+        booking.toObject?.() ? booking.toObject() : booking,
+      ).catch(() => {});
 
       return res.status(201).json({
         success: true,

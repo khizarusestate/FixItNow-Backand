@@ -412,6 +412,7 @@ const folders = [
   "advertisements",
   "profile-pictures",
   "payment-receipts",
+  "worker-verification",
 ];
 
 if (!fs.existsSync(uploadsDir)) {
@@ -434,7 +435,9 @@ app.use(
     // Sensitive folders must require an admin token (cookie-supported).
     const p = String(req.path || "");
     const isSensitive =
-      p.startsWith("/payment-receipts/") || p.startsWith("/admin-profiles/");
+      p.startsWith("/payment-receipts/") ||
+      p.startsWith("/admin-profiles/") ||
+      p.startsWith("/worker-verification/");
     if (!isSensitive) return next();
 
     const token = getAccessTokenFromRequest({

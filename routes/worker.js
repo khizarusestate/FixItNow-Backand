@@ -122,10 +122,10 @@ router.get('/available-jobs', requireWorker, asyncHandler(async (req, res) => {
     return res.status(403).json({ success: false, message: 'Your account must be approved by admin to view jobs.' });
   }
 
-  // Only return bookings that have been approved by admin and not deleted
   const bookings = await Booking.find({
     workerId: null,
-    status: 'approved',
+    claimWorkerId: null,
+    status: 'open',
     isDeleted: false
   })
     .sort({ createdAt: -1 })
@@ -140,115 +140,12 @@ router.get('/available-jobs', requireWorker, asyncHandler(async (req, res) => {
 }));
 
 // ─── POST /api/worker/jobs/:id/accept ──────────────────────────────────────────
-// Worker accepts an available job (self-assignment).
-// Booking must be admin-approved (status: 'approved') before a worker can claim it.
-// Prevents double-booking by checking worker's active job count.
+// Deprecated — workers must use POST /api/worker-jobs/claim with commission proof.
 router.post('/jobs/:id/accept', requireWorker, asyncHandler(async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-    return res.status(400).json({ success: false, message: 'Invalid booking ID.' });
-  }
-
-  const worker = await Worker.findOne({ _id: req.worker.id, isDeleted: false });
-  if (!worker) {
-    return res.status(404).json({ success: false, message: 'Worker not found.' });
-  }
-
-  if (worker.status !== 'approved' && worker.status !== 'active' && worker.status !== 'inactive') {
-    return res.status(403).json({ success: false, message: 'Your account must be approved by admin to claim jobs.' });
-  }
-
-  if (!worker.availability) {
-    return res.status(403).json({ success: false, message: 'You are currently unavailable. Please set your availability to accept jobs.' });
-  }
-
-  // Prevent double-booking: check if worker has active jobs
-  const activeJobsCount = await Booking.countDocuments({
-    workerId: req.worker.id,
-    status: { $in: ['assigned', 'in-progress'] },
-    isDeleted: false
-  });
-
-  if (activeJobsCount >= 3) {
-    return res.status(400).json({ success: false, message: 'You have reached the maximum number of active jobs (3). Complete current jobs before accepting new ones.' });
-  }
-
-  const booking = await Booking.findOne({
-    _id: req.params.id,
-    isDeleted: false,
-  });
-
-  if (!booking) {
-    return sendApiError(res, ERROR_CODES.BOOKING_NOT_FOUND, {
-      message: 'This job could not be found. It may have been removed.',
-      status: 404,
-      refreshRecommended: true,
-    });
-  }
-
-  if (
-    rejectBookingAction(res, booking, BOOKING_ACTION.WORKER_ACCEPT, {
-      existingWorkerId: booking.workerId,
-    })
-  ) {
-    return;
-  }
-
-  // Assign booking to worker
-  booking.workerId = req.worker.id;
-  booking.status = 'assigned';
-  booking.assignedAt = new Date();
-  booking.timeline.push({
-    status: 'assigned',
-    timestamp: new Date(),
-    note: `Accepted by worker: ${worker.fullName}`
-  });
-  await booking.save();
-
-  // Update worker stats and lifecycle
-  await Worker.findByIdAndUpdate(req.worker.id, {
-    $inc: { totalJobs: 1, assignedJobs: 1 },
-    status: 'active',
-    lastActive: new Date()
-  });
-
-  // 🔥 REAL-TIME: Notify worker about job assignment
-  emitToUser(req.worker.id, 'job-accepted', {
-    bookingId: booking._id,
-    serviceTitle: booking.serviceTitle,
-    message: `You have successfully accepted ${booking.serviceTitle}`
-  });
-
-  // Notify admin
-  getSocketIO().to('admin-room').emit('booking-status-update', {
-    bookingId: booking._id,
-    serviceTitle: booking.serviceTitle,
-    status: 'assigned',
-    workerId: req.worker.id,
-    workerName: worker.fullName,
-    timestamp: new Date().toISOString()
-  });
-
-  // Notify customer
-  emitToUser(String(booking.customerId), 'job-assigned', {
-    bookingId: booking._id,
-    serviceTitle: booking.serviceTitle,
-    worker: {
-      id: worker._id,
-      fullName: worker.fullName,
-      phoneNumber: worker.phoneNumber,
-      serviceCategory: worker.primaryServiceCategory,
-      primaryServiceCategory: worker.primaryServiceCategory
-    },
-    message: `A worker has been assigned to your ${booking.serviceTitle} request.`
-  });
-
-  emitAdminRefresh('bookings');
-  emitAdminRefresh('workers');
-
-  return res.json({
-    success: true,
-    message: 'Job accepted successfully.',
-    data: sanitizeAssignedBooking(booking)
+  return res.status(410).json({
+    success: false,
+    message:
+      'Direct job acceptance is no longer supported. Use Claim Job and submit commission payment for admin review.',
   });
 }));
 
