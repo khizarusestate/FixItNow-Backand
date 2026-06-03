@@ -22,9 +22,6 @@ const workerSchema = new mongoose.Schema({
     type: String,
     default: "",
     trim: true,
-    required: function phoneRequired() {
-      return this.signupStep === "complete";
-    },
   },
   emailAddress: {
     type: String,
@@ -89,7 +86,7 @@ const workerSchema = new mongoose.Schema({
     trim: true,
     default: "",
     required: function cnicRequired() {
-      return this.signupStep === "complete" && !this.googleId;
+      return this.signupStep === "complete";
     },
   },
   location: {

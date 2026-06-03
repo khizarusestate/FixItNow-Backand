@@ -1204,17 +1204,6 @@ router.post(
 // ─── POST /api/auth/worker/register/professional (step 2) ─────────────────────
 router.post(
   "/worker/register/professional",
-  (req, res, next) => {
-    verificationPhotoUpload.single("verificationPhoto")(req, res, (err) => {
-      if (err) {
-        return res.status(400).json({
-          success: false,
-          message: err.message || "Photo upload failed.",
-        });
-      }
-      next();
-    });
-  },
   asyncHandler(async (req, res) => {
     const {
       emailAddress,
@@ -1260,10 +1249,10 @@ router.post(
       }
     }
 
-    if (!cnicNumber || !req.file) {
+    if (!cnicNumber) {
       return res.status(400).json({
         success: false,
-        message: "CNIC and verification photo are required.",
+        message: "CNIC is required.",
       });
     }
 
@@ -1288,20 +1277,6 @@ router.post(
       });
     }
 
-    try {
-      await validateFile(
-        req.file.path,
-        req.file.originalname,
-        req.file.mimetype,
-      );
-    } catch (validationError) {
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-      return res.status(400).json({
-        success: false,
-        message: validationError.message,
-      });
-    }
-
     const cnicStored = normalizeCnic(cnicNumber);
     const duplicateCnic = await Worker.findOne({
       cnicNumber: cnicStored,
@@ -1319,7 +1294,6 @@ router.post(
     worker.primaryServiceCategory = serviceFields.primaryServiceCategory;
     worker.primaryServiceName = serviceFields.primaryServiceName || "";
     worker.primaryServiceId = serviceFields.primaryServiceId || null;
-    worker.verificationPhoto = path.basename(req.file.path);
     worker.signupStep = "complete";
     if (phoneNumber) worker.phoneNumber = String(phoneNumber).trim();
     await worker.save();

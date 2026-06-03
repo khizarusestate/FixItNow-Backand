@@ -433,8 +433,12 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   if (status) {
-    if (status === 'assigned') {
-      query.status = { $in: ['assigned', 'in-progress'] };
+    if (status === 'worker-assigned') {
+      query.status = { $in: ['worker-assigned', 'assigned', 'in-progress'] };
+    } else if (status === 'open') {
+      query.status = { $in: ['open', 'pending', 'approved'] };
+    } else if (status === 'cancelled') {
+      query.status = { $in: ['cancelled', 'rejected'] };
     } else {
       query.status = status;
     }
@@ -488,11 +492,14 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   }, {});
 
   const stats = {
-    pending: counts.pending || 0,
-    approved: counts.approved || 0,
-    assigned: (counts.assigned || 0) + (counts['in-progress'] || 0),
-    rejected: counts.rejected || 0,
+    open: (counts.open || 0) + (counts.pending || 0) + (counts.approved || 0),
+    claimPending: counts['claim-pending'] || 0,
+    workerAssigned:
+      (counts['worker-assigned'] || 0) +
+      (counts.assigned || 0) +
+      (counts['in-progress'] || 0),
     completed: counts.completed || 0,
+    cancelled: (counts.cancelled || 0) + (counts.rejected || 0),
     total: Object.values(counts).reduce((a, b) => a + b, 0),
   };
 
