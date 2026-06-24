@@ -26,7 +26,8 @@ export function resolveAdminStatus(admin, isConnected = false) {
   if (!Admin.isAccountActive(admin)) {
     return ADMIN_STATUS.INACTIVE;
   }
-  if (isConnected) {
+  // Online only after at least one successful login (socket alone is not enough)
+  if (isConnected && admin.lastLogin) {
     return ADMIN_STATUS.ONLINE;
   }
   if (admin.lastLogin) {

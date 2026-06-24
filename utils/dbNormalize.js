@@ -5,12 +5,18 @@ import logger from './logger.js';
 
 /** One-time-safe cleanup: legacy invalid status values in existing documents. */
 export async function normalizeLegacyDbStatuses() {
-  const [customerPending, workerPending, adminMissingActive] = await Promise.all([
+  const [customerPending, workerPending, adminMissingActive, adminMissingRole] = await Promise.all([
     Customer.updateMany({ status: 'pending' }, { $set: { status: 'not_approved' } }),
     Worker.updateMany({ status: 'pending' }, { $set: { status: 'not_approved' } }),
     Admin.updateMany(
       { role: 'admin', isActive: { $exists: false } },
       { $set: { isActive: true } },
+    ),
+    Admin.updateMany(
+      {
+        $or: [{ role: { $exists: false } }, { role: null }, { role: '' }],
+      },
+      { $set: { role: 'admin' } },
     ),
   ]);
 
@@ -24,6 +30,12 @@ export async function normalizeLegacyDbStatuses() {
   if (adminMissingActive.modifiedCount > 0) {
     logger.info('Normalized legacy admin isActive fields', {
       admins: adminMissingActive.modifiedCount,
+    });
+  }
+
+  if (adminMissingRole.modifiedCount > 0) {
+    logger.info('Normalized legacy admin role fields', {
+      admins: adminMissingRole.modifiedCount,
     });
   }
 }

@@ -260,8 +260,8 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     );
   }
 
-  // Regular admin: MongoDB
-  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil devicePushEnabled');
+  // Regular admin: MongoDB (team accounts only — super admin is env-only)
+  const admin = await Admin.findOne({ email: email.toLowerCase().trim() }).select('+pin +failedLoginAttempts +lockUntil devicePushEnabled role');
   if (!admin) {
     logger.warn('Failed admin login — unknown email', { email: email.toLowerCase().trim(), loginAs, ip: req.ip });
     return res.status(401).json({
@@ -271,12 +271,21 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  if (admin.role === ADMIN_PANEL_ROLES.SUPER_ADMIN) {
+  const panelRole = admin.role || ADMIN_PANEL_ROLES.ADMIN;
+
+  // Legacy Mongo super_admin rows must use env super admin login
+  if (panelRole === ADMIN_PANEL_ROLES.SUPER_ADMIN) {
     return res.status(403).json({
       success: false,
       message: 'Super Admin must use the Super Admin login option.',
       code: 'WRONG_LOGIN_PORTAL',
     });
+  }
+
+  // Backfill missing role on older team admin records
+  if (!admin.role) {
+    admin.role = ADMIN_PANEL_ROLES.ADMIN;
+    await admin.save();
   }
 
   if (admin.isLocked()) {
@@ -300,7 +309,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
   }
 
   // Super admin in database can always login, regardless of isActive
-  if (admin.role !== ADMIN_PANEL_ROLES.SUPER_ADMIN && !Admin.isAccountActive(admin)) {
+  if (!Admin.isAccountActive(admin)) {
     logger.warn('Admin login blocked: deactivated', {
       adminId: String(admin._id),
       role: admin.role,
@@ -316,21 +325,20 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     });
   }
 
-  if (loginAs === ADMIN_PANEL_ROLES.ADMIN && admin.role !== ADMIN_PANEL_ROLES.ADMIN) {
+  if (loginAs !== ADMIN_PANEL_ROLES.ADMIN) {
     return res.status(403).json({
       success: false,
-      message: 'Super Admin must use the Super Admin login option.',
+      message: 'Use the Admin login option for team accounts.',
       code: 'WRONG_LOGIN_PORTAL',
     });
   }
 
   await admin.recordSuccessfulLogin(req.ip);
-  const panelRole = admin.role || ADMIN_PANEL_ROLES.ADMIN;
   const tokenPayload = {
     id: admin._id,
     role: 'admin',
     email: admin.email,
-    adminRole: panelRole,
+    adminRole: ADMIN_PANEL_ROLES.ADMIN,
   };
   const token = createToken(tokenPayload);
 
@@ -353,7 +361,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
           name: admin.name,
           email: admin.email,
           phone: admin.phone,
-          role: panelRole,
+          role: ADMIN_PANEL_ROLES.ADMIN,
           isActive: admin.isActive ?? true,
           devicePushEnabled: admin.devicePushEnabled !== false,
         },

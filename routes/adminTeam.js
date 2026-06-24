@@ -46,7 +46,9 @@ router.get(
   "/",
   requireSuperAdmin,
   asyncHandler(async (req, res) => {
-    const admins = await Admin.find({ role: ADMIN_PANEL_ROLES.ADMIN })
+    const admins = await Admin.find({
+      role: { $ne: ADMIN_PANEL_ROLES.SUPER_ADMIN },
+    })
       .select("-pin")
       .sort({ createdAt: -1 })
       .lean();
