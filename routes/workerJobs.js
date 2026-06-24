@@ -12,7 +12,9 @@ import logger from "../utils/logger.js";
 import {
   rankBookingsForWorker,
   formatAvailableJobForWorker,
+  parseLocation,
 } from "../utils/jobMatching.js";
+import { getLocationLabel } from "../utils/locationFields.js";
 import { sendApiError, ERROR_CODES } from "../utils/apiErrors.js";
 import {
   BOOKING_ACTION,
@@ -28,6 +30,41 @@ import { BOOKING_STATUS } from "../utils/constants.js";
 import { generateSecureFilename, validateFile } from "../utils/fileValidation.js";
 
 const OPEN_STATUSES = [BOOKING_STATUS.OPEN];
+
+function jobAreaOnly(booking) {
+  const label = getLocationLabel(booking);
+  const { area, city } = parseLocation(label);
+  return area || city || label || "";
+}
+
+function mapMyJobForWorker(booking, customer) {
+  const isClaimPending = booking.status === BOOKING_STATUS.CLAIM_PENDING;
+  const area = jobAreaOnly(booking);
+  return {
+    id: booking._id,
+    serviceTitle: booking.serviceTitle,
+    customerName:
+      booking.customerName?.trim() ||
+      customer?.fullName?.trim() ||
+      (booking.isGuest ? "Guest" : ""),
+    isGuest: Boolean(booking.isGuest),
+    phone: isClaimPending
+      ? ""
+      : booking.phone || customer?.phone || "",
+    address: isClaimPending ? "" : booking.address,
+    location: isClaimPending ? area : booking.location || booking.address,
+    area: isClaimPending ? area : undefined,
+    price: booking.price,
+    status: booking.status,
+    assignedAt: booking.assignedAt,
+    createdAt: booking.createdAt,
+    customerMarkedDone: Boolean(booking.customerMarkedDone),
+    workerMarkedDone: Boolean(booking.workerMarkedDone),
+    customerRating: booking.customerRating,
+    claimPending: isClaimPending,
+    limitedInfo: isClaimPending,
+  };
+}
 
 const commissionReceiptStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -268,31 +305,48 @@ router.post(
       });
     }
 
-    await Booking.findOneAndUpdate(
-      { _id: bookingId, isDeleted: false },
+    const updated = await Booking.findOneAndUpdate(
       {
-        workerId: req.worker.id,
-        status: "pending_approval",  // Changed from "assigned" to "pending_approval"
-        assignedAt: new Date(),
+        _id: bookingId,
+        isDeleted: false,
+        workerId: null,
+        claimWorkerId: null,
+        status: { $in: OPEN_STATUSES },
+      },
+      {
+        claimWorkerId: req.worker.id,
+        status: BOOKING_STATUS.CLAIM_PENDING,
         paymentDetails: {
           ...(booking.paymentDetails?.toObject?.() || booking.paymentDetails || {}),
           totalAmount: booking.price,
           commissionAmount,
           commissionReceipt: receiptFilename,
           commissionTransactionId: transactionId,
+          commissionPaymentMethod: String(req.body.paymentMethod || "").trim(),
           commissionSubmittedAt: new Date(),
           serviceFee: commissionAmount,
           workerEarnings,
         },
         $push: {
           timeline: {
-            status: "pending_approval",  // Changed from "assigned"
+            status: BOOKING_STATUS.CLAIM_PENDING,
             timestamp: new Date(),
             note: `Job claimed by worker ${worker.fullName}. Pending admin approval. Service fee (15%): ₨${commissionAmount}. Worker earnings: ₨${workerEarnings}`,
           },
         },
       },
+      { new: true },
     );
+
+    if (!updated) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return sendApiError(res, ERROR_CODES.BOOKING_ALREADY_CLAIMED, {
+        message:
+          "This booking is no longer available to claim. It may have been taken or removed.",
+        status: 409,
+        refreshRecommended: true,
+      });
+    }
 
     emitToAdmin("notification", {
       type: "bookings",
@@ -308,7 +362,7 @@ router.post(
       title: "Commission claim",
       message: `${worker.fullName} submitted a claim for ${booking.serviceTitle}.`,
       type: "booking",
-      relatedEntityId: booking._id,
+      relatedEntityId: updated._id,
     }).catch(() => {});
 
     return res.json({
@@ -316,7 +370,7 @@ router.post(
       message:
         "Your claim has been submitted successfully. The admin will review your payment proof and assign the job to you once approved.",
       data: {
-        bookingId: booking._id,
+        bookingId: updated._id,
         status: BOOKING_STATUS.CLAIM_PENDING,
         commissionAmount,
         workerEarnings,
@@ -347,16 +401,24 @@ router.get(
   requireWorker,
   asyncHandler(async (req, res) => {
     const bookings = await Booking.find({
-      workerId: req.worker.id,
       isDeleted: false,
-      status: {
-        $in: [
-          BOOKING_STATUS.WORKER_ASSIGNED,
-          "assigned",
-          "in-progress",
-          "completed",
-        ],
-      },
+      $or: [
+        {
+          workerId: req.worker.id,
+          status: {
+            $in: [
+              BOOKING_STATUS.WORKER_ASSIGNED,
+              "assigned",
+              "in-progress",
+              "completed",
+            ],
+          },
+        },
+        {
+          claimWorkerId: req.worker.id,
+          status: BOOKING_STATUS.CLAIM_PENDING,
+        },
+      ],
     })
       .populate("customerId", "fullName email phone")
       .sort({ createdAt: -1 })
@@ -364,28 +426,9 @@ router.get(
 
     return res.json({
       success: true,
-      data: bookings.map((booking) => ({
-        id: booking._id,
-        serviceTitle: booking.serviceTitle,
-        customerName:
-          booking.customerName?.trim() ||
-          booking.customerId?.fullName?.trim() ||
-          (booking.isGuest ? "Guest" : ""),
-        isGuest: Boolean(booking.isGuest),
-        phone:
-          booking.phone ||
-          booking.customerId?.phone ||
-          "",
-        address: booking.address,
-        location: booking.location || booking.address,
-        price: booking.price,
-        status: booking.status,
-        assignedAt: booking.assignedAt,
-        createdAt: booking.createdAt,
-        customerMarkedDone: Boolean(booking.customerMarkedDone),
-        workerMarkedDone: Boolean(booking.workerMarkedDone),
-        customerRating: booking.customerRating,
-      })),
+      data: bookings.map((booking) =>
+        mapMyJobForWorker(booking, booking.customerId),
+      ),
     });
   }),
 );

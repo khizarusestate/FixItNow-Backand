@@ -1109,18 +1109,26 @@ router.post(
 router.post(
   "/worker/register",
   asyncHandler(async (req, res) => {
-    const { firstName, lastName, emailAddress, password, fullName: legacyFullName } =
-      req.body;
+    const {
+      firstName,
+      lastName,
+      emailAddress,
+      password,
+      phoneNumber,
+      fullName: legacyFullName,
+    } = req.body;
     const first = String(firstName || "").trim();
     const last = String(lastName || "").trim();
     const fullName =
       [first, last].filter(Boolean).join(" ") ||
       String(legacyFullName || "").trim();
 
-    if (!fullName || !emailAddress || !password) {
+    const phone = String(phoneNumber || "").trim();
+
+    if (!fullName || !emailAddress || !password || !phone) {
       return res.status(400).json({
         success: false,
-        message: "First name, last name, email, and password are required.",
+        message: "Full name, email, phone number, and password are required.",
       });
     }
 
@@ -1169,7 +1177,7 @@ router.post(
       fullName,
       emailAddress: email,
       password,
-      phoneNumber: "",
+      phoneNumber: phone,
       cnicNumber: "",
       primaryServiceCategory: "",
       signupStep: "awaiting_email",
@@ -1213,7 +1221,6 @@ router.post(
       primaryServiceId,
       primaryServiceName,
       primaryServiceCategory,
-      phoneNumber,
     } = req.body;
 
     if (!emailAddress) {
@@ -1257,6 +1264,20 @@ router.post(
       });
     }
 
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Passport-size verification photo is required.",
+      });
+    }
+
+    if (!worker.phoneNumber?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is missing from signup. Please contact support.",
+      });
+    }
+
     const cnicClean = String(cnicNumber).replace(/-/g, "");
     if (!/^\d{13}$/.test(cnicClean)) {
       return res.status(400).json({
@@ -1296,8 +1317,7 @@ router.post(
     worker.primaryServiceName = serviceFields.primaryServiceName || "";
     worker.primaryServiceId = serviceFields.primaryServiceId || null;
     worker.signupStep = "complete";
-    if (phoneNumber) worker.phoneNumber = String(phoneNumber).trim();
-    
+
     // Handle location update
     applyLocationUpdate(worker, req.body);
     

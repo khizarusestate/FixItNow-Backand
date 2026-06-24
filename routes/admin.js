@@ -498,6 +498,7 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
     Booking.find(query)
       .populate('customerId', 'fullName email phone profilePicture')
       .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
+      .populate('claimWorkerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
       .sort(sort)
       .skip(skip)
       .limit(Number(limit))
@@ -662,6 +663,12 @@ router.patch(
           message: `Your claim for ${booking.serviceTitle} was rejected. The job is open again.`,
           type: 'warning',
         }).catch(() => {});
+        emitToUser(String(rejectedWorkerId), 'booking-status-update', {
+          bookingId: booking._id,
+          status: booking.status,
+          serviceTitle: booking.serviceTitle,
+          message: `Your claim for ${booking.serviceTitle} was rejected.`,
+        });
       }
 
       emitRefresh('bookings');
@@ -678,6 +685,7 @@ router.patch(
 
     booking.status = 'worker-assigned';
     booking.workerId = booking.claimWorkerId;
+    booking.claimWorkerId = null;
     booking.assignedAt = new Date();
     booking.paymentDetails = {
       ...(booking.paymentDetails?.toObject?.() || booking.paymentDetails || {}),
@@ -707,6 +715,17 @@ router.patch(
         message: `You are assigned to ${booking.serviceTitle}. Full customer details are now visible.`,
         type: 'success',
       }).catch(() => {});
+      emitToUser(String(booking.workerId), 'job-assigned', {
+        bookingId: booking._id,
+        serviceTitle: booking.serviceTitle,
+        status: booking.status,
+      });
+      emitToUser(String(booking.workerId), 'booking-status-update', {
+        bookingId: booking._id,
+        status: booking.status,
+        serviceTitle: booking.serviceTitle,
+        message: `Your claim for ${booking.serviceTitle} was approved.`,
+      });
     }
 
     if (booking.customerId) {
@@ -2251,117 +2270,27 @@ router.post(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WORKER JOB APPROVAL ENDPOINTS
+// DEPRECATED — use PATCH /api/admin/bookings/:id/claim-review instead
 // ═══════════════════════════════════════════════════════════════════════════
 
-// POST /api/admin/worker-jobs/:jobId/approve
-// Admin approves a worker's job claim
 router.post(
   '/worker-jobs/:jobId/approve',
   requireAdmin,
-  asyncHandler(async (req, res) => {
-    const { jobId } = req.params;
-    const { note } = req.body;
-
-    const Booking = mongoose.model('Booking');
-    const booking = await Booking.findById(jobId);
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job not found',
-      });
-    }
-
-    if (!booking.workerId) {
-      return res.status(400).json({
-        success: false,
-        message: 'No worker has claimed this job yet',
-      });
-    }
-
-    if (booking.status === 'approved' || booking.status === 'in_progress') {
-      return res.status(400).json({
-        success: false,
-        message: 'Job is already approved or in progress',
-      });
-    }
-
-    // Update job status to approved
-    booking.status = 'approved';
-    booking.approvedAt = new Date();
-
-    if (booking.timeline && Array.isArray(booking.timeline)) {
-      booking.timeline.push({
-        status: 'approved',
-        timestamp: new Date(),
-        note: note || `Job approved by admin`,
-      });
-    }
-
-    await booking.save();
-
-    return res.json({
-      success: true,
-      message: 'Job approved successfully',
-      data: { job: booking },
+  asyncHandler(async (_req, res) => {
+    return res.status(410).json({
+      success: false,
+      message: 'Deprecated. Use PATCH /api/admin/bookings/:id/claim-review with action approve.',
     });
   }),
 );
 
-// POST /api/admin/worker-jobs/:jobId/reject
-// Admin rejects a worker's job claim
 router.post(
   '/worker-jobs/:jobId/reject',
   requireAdmin,
-  asyncHandler(async (req, res) => {
-    const { jobId } = req.params;
-    const { note } = req.body;
-
-    const Booking = mongoose.model('Booking');
-    const booking = await Booking.findById(jobId);
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job not found',
-      });
-    }
-
-    if (!booking.workerId) {
-      return res.status(400).json({
-        success: false,
-        message: 'No worker has claimed this job',
-      });
-    }
-
-    if (booking.status === 'rejected' || booking.status === 'approved') {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot reject job with current status',
-      });
-    }
-
-    // Update job status to rejected and remove worker
-    booking.status = 'available';
-    const rejectedWorkerId = booking.workerId;
-    booking.workerId = null;
-    booking.rejectedAt = new Date();
-
-    if (booking.timeline && Array.isArray(booking.timeline)) {
-      booking.timeline.push({
-        status: 'rejected',
-        timestamp: new Date(),
-        note: note || `Job claim rejected by admin`,
-      });
-    }
-
-    await booking.save();
-
-    return res.json({
-      success: true,
-      message: 'Job rejected and returned to available',
-      data: { job: booking },
+  asyncHandler(async (_req, res) => {
+    return res.status(410).json({
+      success: false,
+      message: 'Deprecated. Use PATCH /api/admin/bookings/:id/claim-review with action reject.',
     });
   }),
 );
