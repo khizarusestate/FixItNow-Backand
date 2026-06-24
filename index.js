@@ -66,6 +66,7 @@ import {
   emitToAdmin,
   emitToSuperAdmins,
 } from "./utils/socketManager.js";
+import { joinAdminSocketSession, emitAdminPresenceOffline } from "./utils/adminSocketJoin.js";
 import {
   setUserPresenceOnline,
   setUserPresenceOffline,
@@ -174,94 +175,10 @@ io.on("connection", (socket) => {
 
   socket.on("join-admin", async (tokenArg) => {
     try {
-      const token =
-        typeof tokenArg === "string" && tokenArg
-          ? tokenArg
-          : getAccessTokenFromRequest({
-              headers: { cookie: socket.handshake.headers.cookie || "" },
-            });
-      if (!token) {
-        return socket.emit("error", { message: "Admin token required" });
-      }
-      // token may come from httpOnly cookie when client emits join-admin without body
-      const decoded = verifyToken(token);
-
-      if (decoded.role !== "admin") {
-        return socket.emit("error", { message: "Admin access required" });
-      }
-
-      const { isEnvSuperAdminToken, ENV_SUPER_ADMIN_ID } = await import(
-        "./services/envSuperAdmin.js"
-      );
-      if (isEnvSuperAdminToken(decoded)) {
-        const adminId = ENV_SUPER_ADMIN_ID;
-        const becameOnline = addAdminSocket(adminId, socket.id);
-        socket.join("admin-room");
-        socket.join(`admin:${adminId}`);
-        socket.isAdmin = true;
-        socket.adminId = adminId;
-        socket.adminPanelRole = "super_admin";
-        socket.join("super-admin-room");
-        if (becameOnline) {
-          emitToAdmin("admin-status-updated", {
-            adminId,
-            status: "online",
-            adminRole: "super_admin",
-            timestamp: new Date().toISOString(),
-          });
-        }
-        logger.info("Super admin joined (env)", { adminId });
-        return;
-      }
-
-      const adminDoc = await Admin.findById(decoded.id).select("isActive role");
-      if (!adminDoc) {
-        return socket.emit("error", { message: "Admin account not found" });
-      }
-      if (!Admin.isAccountActive(adminDoc)) {
-        return socket.emit("error", {
-          message: "Admin account deactivated",
-          code: "ADMIN_DEACTIVATED",
-        });
-      }
-
-      const adminId = String(decoded.id);
-      const becameOnline = addAdminSocket(adminId, socket.id);
-
-      socket.join("admin-room");
-      socket.join(`admin:${adminId}`);
-
-      socket.isAdmin = true;
-      socket.adminId = adminId;
-      socket.adminPanelRole = decoded.adminRole || null;
-
-      if (decoded.adminRole === "super_admin") {
-        socket.join("super-admin-room");
-      }
-
-      if (becameOnline) {
-        emitToAdmin("admin-status-updated", {
-          adminId,
-          status: "online",
-          adminRole: decoded.adminRole || "admin",
-          timestamp: new Date().toISOString(),
-        });
-        emitToSuperAdmins("admin-status-updated", {
-          adminId,
-          status: "online",
-          adminRole: decoded.adminRole || "admin",
-          timestamp: new Date().toISOString(),
-        });
-        emitToSuperAdmins("admin-team-updated", {
-          action: "connected",
-          adminId,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      logger.info("Admin joined", { adminId });
+      await joinAdminSocketSession(socket, tokenArg);
     } catch (err) {
-      socket.emit("error", { message: "Invalid token" });
+      logger.warn("Admin socket join error", { error: err.message });
+      socket.emit("admin-join-error", { message: "Could not join admin session", code: "JOIN_FAILED" });
     }
   });
 
@@ -364,23 +281,7 @@ io.on("connection", (socket) => {
     if (socket.isAdmin && socket.adminId) {
       const becameOffline = removeAdminSocket(socket.adminId, socket.id);
       if (becameOffline) {
-        emitToAdmin("admin-status-updated", {
-          adminId: socket.adminId,
-          status: "offline",
-          adminRole: socket.adminPanelRole || "admin",
-          timestamp: new Date().toISOString(),
-        });
-        emitToSuperAdmins("admin-status-updated", {
-          adminId: socket.adminId,
-          status: "offline",
-          adminRole: socket.adminPanelRole || "admin",
-          timestamp: new Date().toISOString(),
-        });
-        emitToSuperAdmins("admin-team-updated", {
-          action: "disconnected",
-          adminId: socket.adminId,
-          timestamp: new Date().toISOString(),
-        });
+        emitAdminPresenceOffline(socket);
       }
     }
   });

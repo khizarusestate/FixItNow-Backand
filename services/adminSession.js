@@ -1,6 +1,6 @@
 import Admin from '../models/Admin.js';
 import RefreshToken from '../models/RefreshToken.js';
-import { emitToAdminUser, emitToSuperAdmins } from '../utils/socketManager.js';
+import { emitToAdminUser, emitToAdmin, emitToSuperAdmins } from '../utils/socketManager.js';
 import logger from '../utils/logger.js';
 
 /** Revoke all refresh tokens and notify connected clients to logout immediately. */
@@ -20,11 +20,13 @@ export async function forceLogoutAdmin(adminId, reason = 'Your session has ended
   logger.info('Admin force logout', { adminId: id, reason });
 }
 
-/** Notify all super admins that the team list changed. */
+/** Notify admin panels that the team list changed. */
 export function notifyAdminTeamUpdated(action, admin = null) {
-  emitToSuperAdmins('admin-team-updated', {
+  const payload = {
     action,
     admin: admin ? Admin.sanitize(admin) : null,
     timestamp: new Date().toISOString(),
-  });
+  };
+  emitToAdmin('admin-team-updated', payload);
+  emitToSuperAdmins('admin-team-updated', payload);
 }
