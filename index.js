@@ -56,6 +56,7 @@ import { initCache, closeCache } from "./utils/cache.js";
 import emailService from "./services/emailService.js";
 import { startEmailWorker } from "./utils/emailQueue.js";
 import NotificationManager from "./utils/notificationManager.js";
+import { initNotificationService, processRetryQueue } from "./services/notificationService.js";
 
 import {
   initializeSocketIO,
@@ -171,9 +172,13 @@ initializeSocketIO(io);
 // Initialize NotificationManager for push notifications with fallback system
 const notificationManager = new NotificationManager(io, null, { Worker, Customer, Notification: null });
 
+// Initialize Notification Service Layer
+initNotificationService(io, null, { Worker, Customer, Notification: null });
+
 // Process retry queue every 10 seconds
-setInterval(() => {
-  notificationManager.processRetryQueue();
+setInterval(async () => {
+  await notificationManager.processRetryQueue();
+  await processRetryQueue();
   notificationManager.logStatus();
 }, 10000);
 

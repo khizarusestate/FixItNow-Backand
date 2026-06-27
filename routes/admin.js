@@ -637,7 +637,7 @@ router.patch(
 
     if (action === 'reject') {
       const rejectedWorkerId = booking.claimWorkerId;
-      booking.status = 'open';
+      booking.status = 'pending';
       booking.workerId = null;
       booking.claimWorkerId = null;
       booking.paymentDetails = {
@@ -649,7 +649,7 @@ router.patch(
         commissionRejectReason: String(reason || '').trim().slice(0, 500),
       };
       booking.timeline.push({
-        status: 'open',
+        status: 'pending',
         timestamp: new Date(),
         note: `Commission claim rejected. ${reason || ''}`.trim(),
       });
@@ -687,6 +687,7 @@ router.patch(
     booking.workerId = booking.claimWorkerId;
     booking.claimWorkerId = null;
     booking.assignedAt = new Date();
+    booking.startedAt = new Date();
     booking.paymentDetails = {
       ...(booking.paymentDetails?.toObject?.() || booking.paymentDetails || {}),
       commissionVerifiedAt: new Date(),

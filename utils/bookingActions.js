@@ -15,16 +15,12 @@ export const BOOKING_ACTION = {
 };
 
 const ADMIN_TRANSITIONS = {
-  open: ["cancelled", "rejected"],
-  "claim-pending": ["open", "worker-assigned", "cancelled"],
-  "worker-assigned": ["in-progress", "cancelled"],
-  "in-progress": ["completed", "cancelled"],
+  pending: ["worker-assigned", "claim-pending", "cancelled", "rejected"],
+  "claim-pending": ["worker-assigned", "pending", "cancelled"],
+  "worker-assigned": ["completed", "cancelled"],
   completed: [],
   rejected: [],
   cancelled: [],
-  pending: ["open", "cancelled", "rejected"],
-  approved: ["open", "cancelled"],
-  assigned: ["in-progress", "cancelled"],
 };
 
 /**
@@ -126,18 +122,11 @@ function getCustomerCompleteBlock(booking, serviceTitle) {
       status: 409,
     });
   }
-  if (
-    ["worker-assigned", "assigned", "in-progress"].includes(status)
-  ) {
+  if (status === "worker-assigned") {
     return null;
   }
 
   const blocks = {
-    open: blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
-      message: `${serviceTitle} is open. Mark it done after a worker is assigned.`,
-      status: 400,
-    }),
     pending: blockPayload({
       code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
       message: `${serviceTitle} is not assigned yet. You can mark it done only after a worker is assigned.`,
@@ -186,21 +175,14 @@ function getWorkerMarkDoneBlock(booking, serviceTitle) {
       status: 409,
     });
   }
-  if (
-    ["worker-assigned", "assigned", "in-progress"].includes(status)
-  ) {
+  if (status === "worker-assigned") {
     return null;
   }
 
   const blocks = {
-    open: blockPayload({
+    pending: blockPayload({
       code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
       message: `${serviceTitle} is not assigned to you yet.`,
-      status: 400,
-    }),
-    "claim-pending": blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
-      message: `${serviceTitle} is awaiting commission verification.`,
       status: 400,
     }),
     completed: blockPayload({
@@ -239,18 +221,13 @@ function getWorkerClaimBlock(status, serviceTitle, context) {
     });
   }
 
-  if (status === "open" || status === "approved") return null;
+  if (status === "pending") return null;
 
   const blocks = {
-    "claim-pending": blockPayload({
+    "worker-assigned": blockPayload({
       code: ERROR_CODES.BOOKING_ALREADY_CLAIMED,
-      message: `${serviceTitle} already has a pending claim under review.`,
+      message: `${serviceTitle} has already been assigned to a worker.`,
       status: 409,
-    }),
-    pending: blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_AVAILABLE,
-      message: `${serviceTitle} is not available to claim yet.`,
-      status: 400,
     }),
     rejected: blockPayload({
       code: ERROR_CODES.BOOKING_NOT_AVAILABLE,
@@ -266,16 +243,6 @@ function getWorkerClaimBlock(status, serviceTitle, context) {
       code: ERROR_CODES.BOOKING_ALREADY_COMPLETED,
       message: `${serviceTitle} is already completed.`,
       status: 410,
-    }),
-    assigned: blockPayload({
-      code: ERROR_CODES.BOOKING_ALREADY_CLAIMED,
-      message: `${serviceTitle} has already been assigned to a worker.`,
-      status: 409,
-    }),
-    "in-progress": blockPayload({
-      code: ERROR_CODES.BOOKING_IN_PROGRESS,
-      message: `${serviceTitle} is already in progress with another worker.`,
-      status: 409,
     }),
   };
 
@@ -328,11 +295,9 @@ export function rejectBookingAction(res, booking, action, context = {}) {
 export function customerStatusNotification(status, serviceTitle) {
   const title = serviceTitle ? `"${serviceTitle}"` : "Your booking";
   const map = {
-    approved: `${title} has been approved by the admin. A worker may be assigned soon.`,
+    "worker-assigned": `A worker has been assigned to ${title}.`,
     rejected: `${title} was rejected by the admin. Please submit a new request if you still need the service.`,
     cancelled: `${title} has been cancelled.`,
-    assigned: `A worker has been assigned to ${title}.`,
-    "in-progress": `Work on ${title} is now in progress.`,
     completed: `${title} has been marked as completed.`,
   };
   return map[status] || `${title} status was updated to ${humanizeBookingStatus(status)}.`;

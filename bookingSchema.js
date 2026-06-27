@@ -76,19 +76,14 @@ const bookingSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      default: 'open',
+      default: 'pending',
       enum: [
-        'open',
-        'claim-pending',
-        'worker-assigned',
-        'in-progress',
-        'completed',
-        'cancelled',
-        'rejected',
-        'pending',
-        'approved',
-        'pending-confirmation',
-        'assigned',
+        'pending',           // Booking created, waiting for worker or has pending claim
+        'claim-pending',     // Worker claimed, admin reviewing (internal state)
+        'worker-assigned',   // Admin approved claim, worker assigned
+        'completed',         // Both marked done
+        'cancelled',         // Customer or admin cancelled
+        'rejected',          // Admin rejected claim
       ],
     },
     claimWorkerId: {
@@ -99,6 +94,11 @@ const bookingSchema = new mongoose.Schema(
     assignedAt: {
       type: Date,
       default: null
+    },
+    startedAt: {
+      type: Date,
+      default: null,
+      description: 'Set when worker claim is approved (actual work begins)'
     },
     timeline: [{
       status: String,
