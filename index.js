@@ -55,6 +55,7 @@ import { ensureSuperAdminActive } from "./utils/ensureSuperAdminActive.js";
 import { initCache, closeCache } from "./utils/cache.js";
 import emailService from "./services/emailService.js";
 import { startEmailWorker } from "./utils/emailQueue.js";
+import NotificationManager from "./utils/notificationManager.js";
 
 import {
   initializeSocketIO,
@@ -166,6 +167,15 @@ const io = new Server(httpServer, {
 });
 
 initializeSocketIO(io);
+
+// Initialize NotificationManager for push notifications with fallback system
+const notificationManager = new NotificationManager(io, null, { Worker, Customer, Notification: null });
+
+// Process retry queue every 10 seconds
+setInterval(() => {
+  notificationManager.processRetryQueue();
+  notificationManager.logStatus();
+}, 10000);
 
 io.on("connection", (socket) => {
   logger.info("Client connected", {
