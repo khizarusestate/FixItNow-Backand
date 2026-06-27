@@ -157,4 +157,124 @@ router.delete(
   }),
 );
 
+// ─── GET /api/notifications/settings ────────────────────────────────────────────
+// Get user's notification preferences
+import NotificationPreference from '../models/NotificationPreference.js';
+
+router.get(
+  '/settings',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.id;
+    const userType = req.user?.role || 'customer';
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    let prefs = await NotificationPreference.findOne({ userId });
+
+    // Create default preferences if not exists
+    if (!prefs) {
+      prefs = new NotificationPreference({
+        userId,
+        userType,
+        pushEnabled: true,
+        inAppEnabled: true,
+        emailEnabled: false,
+        notificationTypes: {
+          newBooking: true,
+          newWorker: true,
+          newCustomer: true,
+          claimPending: true,
+          newReview: true,
+          newAdvertisement: true,
+          newJob: true,
+          claimApproved: true,
+          claimRejected: true,
+          bookingReceived: true,
+          workerAssigned: true,
+          jobCompleted: true,
+        },
+      });
+      await prefs.save();
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        pushEnabled: prefs.pushEnabled,
+        inAppEnabled: prefs.inAppEnabled,
+        emailEnabled: prefs.emailEnabled,
+        notificationTypes: prefs.notificationTypes || {},
+      },
+    });
+  }),
+);
+
+// ─── PUT /api/notifications/settings ───────────────────────────────────────────
+// Update user's notification preferences
+router.put(
+  '/settings',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.id;
+    const userType = req.user?.role || 'customer';
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { pushEnabled, inAppEnabled, emailEnabled, notificationTypes } = req.body;
+
+    let prefs = await NotificationPreference.findOne({ userId });
+
+    if (!prefs) {
+      prefs = new NotificationPreference({
+        userId,
+        userType,
+      });
+    }
+
+    // Update preferences
+    if (pushEnabled !== undefined) {
+      prefs.pushEnabled = Boolean(pushEnabled);
+    }
+    if (inAppEnabled !== undefined) {
+      prefs.inAppEnabled = Boolean(inAppEnabled);
+    }
+    if (emailEnabled !== undefined) {
+      prefs.emailEnabled = Boolean(emailEnabled);
+    }
+    if (notificationTypes && typeof notificationTypes === 'object') {
+      prefs.notificationTypes = {
+        ...prefs.notificationTypes,
+        ...notificationTypes,
+      };
+    }
+
+    prefs.updatedAt = new Date();
+    await prefs.save();
+
+    console.log(`✓ Notification settings updated for user ${userId}`);
+
+    return res.json({
+      success: true,
+      message: 'Notification settings updated',
+      data: {
+        pushEnabled: prefs.pushEnabled,
+        inAppEnabled: prefs.inAppEnabled,
+        emailEnabled: prefs.emailEnabled,
+        notificationTypes: prefs.notificationTypes || {},
+      },
+    });
+  }),
+);
+
 export default router;

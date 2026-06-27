@@ -19,6 +19,7 @@ import {
 import { finalizeBookingCompletion } from '../utils/bookingCompletion.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 import { BOOKING_STATUS } from '../utils/constants.js';
+import { notifyAdminNewBooking, notifyCustomerBookingReceived } from '../services/notificationService.js';
 import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
 
 const router = express.Router();
@@ -251,6 +252,12 @@ router.post('/',
         message: `${booking.customerName} booked ${booking.serviceTitle}.`,
         type: 'booking',
       }).catch(() => {});
+
+      // Send notifications via notification service
+      notifyAdminNewBooking(booking).catch(() => {});
+      if (customer) {
+        notifyCustomerBookingReceived(customer._id, booking).catch(() => {});
+      }
 
       notifyWorkersOfHighPriorityJob(
         booking.toObject?.() ? booking.toObject() : booking,

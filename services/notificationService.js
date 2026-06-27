@@ -3,9 +3,11 @@
  * 
  * Centralized notification service using notificationManager
  * Handles all notification types for admin/worker/customer
+ * Checks user preferences before sending
  */
 
 import NotificationManager from '../utils/notificationManager.js';
+import NotificationPreference from '../models/NotificationPreference.js';
 
 let notificationManager = null;
 
@@ -15,14 +17,38 @@ export function initNotificationService(io, fcm, db) {
 }
 
 /**
+ * Check if user has notification type enabled
+ */
+async function shouldSendNotification(userId, notificationType) {
+  try {
+    const prefs = await NotificationPreference.findOne({ userId });
+    
+    if (!prefs) return true; // Default to send if no preferences exist yet
+    
+    // Check if general notifications are enabled
+    if (!prefs.inAppEnabled && !prefs.pushEnabled) return false;
+    
+    // Check if specific notification type is enabled
+    const typeEnabled = prefs.notificationTypes?.[notificationType];
+    if (typeEnabled === false) return false;
+    
+    return true;
+  } catch (error) {
+    console.warn(`Error checking notification preference: ${error.message}`);
+    return true; // Default to send on error
+  }
+}
+
+/**
  * ADMIN NOTIFICATIONS
  */
 export async function notifyAdminNewBooking(booking) {
   if (!notificationManager) return;
   
+  // Admin gets all notifications - send to all admins
   return await notificationManager.sendNotification('admin', {
     title: 'New Booking Request 🔔',
-    message: `New ${booking.serviceTitle} booking from ${booking.customerName}. Price: ₨${booking.price}`,
+    message: `New ${booking.serviceTitle} booking from ${booking.customerName || 'Customer'}. Price: ₨${booking.price}`,
     type: 'new_booking',
     entityId: booking._id,
   });
@@ -92,6 +118,9 @@ export async function notifyWorkerNewJob(worker, booking) {
   const workerIds = Array.isArray(worker) ? worker.map(w => w._id) : [worker._id];
   
   for (const workerId of workerIds) {
+    const shouldSend = await shouldSendNotification(workerId, 'newJob');
+    if (!shouldSend) continue;
+    
     await notificationManager.sendNotification(workerId, {
       title: 'New Job Available 🎯',
       message: `${booking.serviceTitle} • ₨${booking.price} • ${booking.location}`,
@@ -104,6 +133,9 @@ export async function notifyWorkerNewJob(worker, booking) {
 export async function notifyWorkerClaimApproved(workerId, booking) {
   if (!notificationManager) return;
   
+  const shouldSend = await shouldSendNotification(workerId, 'claimApproved');
+  if (!shouldSend) return;
+  
   return await notificationManager.sendNotification(workerId, {
     title: 'Claim Approved ✅',
     message: `Your claim for ${booking.serviceTitle} was approved! Job assigned.`,
@@ -114,6 +146,9 @@ export async function notifyWorkerClaimApproved(workerId, booking) {
 
 export async function notifyWorkerClaimRejected(workerId, booking, reason) {
   if (!notificationManager) return;
+  
+  const shouldSend = await shouldSendNotification(workerId, 'claimRejected');
+  if (!shouldSend) return;
   
   return await notificationManager.sendNotification(workerId, {
     title: 'Claim Rejected ❌',
@@ -129,6 +164,9 @@ export async function notifyWorkerClaimRejected(workerId, booking, reason) {
 export async function notifyCustomerBookingReceived(customerId, booking) {
   if (!notificationManager) return;
   
+  const shouldSend = await shouldSendNotification(customerId, 'bookingReceived');
+  if (!shouldSend) return;
+  
   return await notificationManager.sendNotification(customerId, {
     title: 'Booking Received ✓',
     message: `Your ${booking.serviceTitle} request has been received. Wait for a worker to claim.`,
@@ -140,6 +178,9 @@ export async function notifyCustomerBookingReceived(customerId, booking) {
 export async function notifyCustomerWorkerAssigned(customerId, booking, worker) {
   if (!notificationManager) return;
   
+  const shouldSend = await shouldSendNotification(customerId, 'workerAssigned');
+  if (!shouldSend) return;
+  
   return await notificationManager.sendNotification(customerId, {
     title: 'Worker Assigned 👷',
     message: `${worker.fullName} has been assigned to your ${booking.serviceTitle} job.`,
@@ -150,6 +191,9 @@ export async function notifyCustomerWorkerAssigned(customerId, booking, worker) 
 
 export async function notifyCustomerJobCompleted(customerId, booking) {
   if (!notificationManager) return;
+  
+  const shouldSend = await shouldSendNotification(customerId, 'jobCompleted');
+  if (!shouldSend) return;
   
   return await notificationManager.sendNotification(customerId, {
     title: 'Job Completed ✓✓',
@@ -190,4 +234,5 @@ export default {
   notifyCustomerJobCompleted,
   processRetryQueue,
   getNotificationStatus,
+  shouldSendNotification,
 };
