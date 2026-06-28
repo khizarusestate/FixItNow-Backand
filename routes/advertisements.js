@@ -12,6 +12,7 @@ import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { emitToAdmin, emitToUser } from "../utils/socketManager.js";
 import { createNotification, notifyAllAdmins } from "../utils/createNotification.js";
+import { notifyAdminNewAdvertisement } from "../services/notificationService.js";
 import {
   parsePayAfterWork,
   validatePaymentSelection,
@@ -388,6 +389,10 @@ router.post(
         type: "info",
         relatedEntityId: advertisement._id,
       });
+      
+      // Send notification via notification service
+      notifyAdminNewAdvertisement(advertisement).catch(() => {});
+      
       emitToAdmin("refresh", {
         type: "advertisements",
         timestamp: new Date().toISOString(),

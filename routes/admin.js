@@ -41,6 +41,7 @@ import adminTeamRoutes from './adminTeam.js';
 import emailService from '../services/emailService.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
+import { notifyWorkerClaimApproved, notifyWorkerClaimRejected, notifyCustomerWorkerAssigned } from '../services/notificationService.js';
 import { cacheGetOrSet, cacheDelByPrefix } from '../utils/cache.js';
 import { pickBestWorkerForBooking, rankWorkersForBooking } from '../utils/workerRanking.js';
 import { attachAuthToResponse } from '../utils/attachAuthResponse.js';
@@ -663,6 +664,10 @@ router.patch(
           message: `Your claim for ${booking.serviceTitle} was rejected. The job is open again.`,
           type: 'warning',
         }).catch(() => {});
+        
+        // Send notification via notification service
+        notifyWorkerClaimRejected(rejectedWorkerId, booking, reason).catch(() => {});
+        
         emitToUser(String(rejectedWorkerId), 'booking-status-update', {
           bookingId: booking._id,
           status: booking.status,
@@ -716,6 +721,10 @@ router.patch(
         message: `You are assigned to ${booking.serviceTitle}. Full customer details are now visible.`,
         type: 'success',
       }).catch(() => {});
+      
+      // Send notification via notification service
+      notifyWorkerClaimApproved(booking.workerId, booking).catch(() => {});
+      
       emitToUser(String(booking.workerId), 'job-assigned', {
         bookingId: booking._id,
         serviceTitle: booking.serviceTitle,
@@ -737,6 +746,9 @@ router.patch(
         message: `A worker has been assigned to ${booking.serviceTitle}.`,
         type: 'success',
       }).catch(() => {});
+      
+      // Send notification via notification service
+      notifyCustomerWorkerAssigned(booking.customerId, booking, worker).catch(() => {});
     }
 
     emitRefresh('bookings');

@@ -19,7 +19,7 @@ import {
 import { finalizeBookingCompletion } from '../utils/bookingCompletion.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 import { BOOKING_STATUS } from '../utils/constants.js';
-import { notifyAdminNewBooking, notifyCustomerBookingReceived } from '../services/notificationService.js';
+import { notifyAdminNewBooking, notifyCustomerBookingReceived, notifyCustomerJobCompleted } from '../services/notificationService.js';
 import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
 
 const router = express.Router();
@@ -515,6 +515,10 @@ router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
       `Job completed: ${booking.serviceTitle} by ${worker.fullName}. Rating: ${rating} stars. Commission: ₨${serviceFee}`,
     );
     refreshAdmin('revenue');
+    
+    // Send completion notifications via notification service
+    notifyCustomerJobCompleted(req.customer.id, booking).catch(() => {});
+    
     emitToUser(worker._id.toString(), 'job-completed', {
       bookingId: booking._id,
       serviceTitle: booking.serviceTitle,

@@ -6,6 +6,7 @@ import Booking from '../bookingSchema.js';
 import Worker from '../workerSchema.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
+import { notifyAdminNewReview } from '../services/notificationService.js';
 
 const router = express.Router();
 
@@ -62,6 +63,9 @@ router.post('/', requireCustomer, asyncHandler(async (req, res) => {
   });
 
   logger.info('Review created', { reviewId: review._id, bookingId, workerId: booking.workerId, rating });
+
+  // Send notification to admin
+  notifyAdminNewReview(review, booking).catch(() => {});
 
   return res.status(201).json({
     success: true,

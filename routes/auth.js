@@ -21,6 +21,7 @@ import logger from "../utils/logger.js";
 import { emitToUser, emitToAdmin } from "../utils/socketManager.js";
 import emailService from "../services/emailService.js";
 import { createNotification, notifyAllAdmins } from "../utils/createNotification.js";
+import { notifyAdminNewWorker, notifyAdminNewCustomer } from "../services/notificationService.js";
 import { normalizeCnic } from "../utils/cnic.js";
 import {
   applyLocationUpdate,
@@ -325,6 +326,9 @@ router.post(
       type: "info",
       relatedEntityId: customer._id,
     }).catch(() => {});
+
+    // Send notification via notification service
+    notifyAdminNewCustomer(customer).catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -1339,6 +1343,9 @@ router.post(
       type: "info",
       relatedEntityId: worker._id,
     }).catch(() => {});
+
+    // Send notification via notification service
+    notifyAdminNewWorker(worker).catch(() => {});
 
     return res.json({
       success: true,
