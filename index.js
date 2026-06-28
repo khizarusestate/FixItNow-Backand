@@ -140,6 +140,10 @@ function buildAllowedOrigins() {
       "https://fix-it-now-omega.vercel.app",
       "https://fixitnow-admin.vercel.app",
       "https://fix-it-now-admin-panal.vercel.app",
+      "https://fixitnow.pk",
+      "https://fixitnow.cloud",
+      "https://admin.fixitnow.pk",
+      "https://admin.fixitnow.cloud",
     ].forEach(add);
   }
 

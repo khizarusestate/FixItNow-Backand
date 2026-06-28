@@ -1,4 +1,5 @@
 import express from "express";
+import jwt from "jsonwebtoken";
 import multer from "multer";
 import mongoose from "mongoose";
 import { asyncHandler } from "../middleware/errorHandler.js";
@@ -320,15 +321,7 @@ router.post(
       `New customer joined: ${customer.fullName}`,
     );
     emitRefresh("customers");
-    notifyAllAdmins({
-      title: "New customer",
-      message: `${customer.fullName} created a new customer account.`,
-      type: "info",
-      relatedEntityId: customer._id,
-    }).catch(() => {});
-
-    // Send notification via notification service
-    notifyAdminNewCustomer(customer).catch(() => {});
+      notifyAdminNewCustomer(customer).catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -448,9 +441,33 @@ router.post(
     customer.emailVerificationExpiresAt = null;
     await customer.save();
 
+    // Notify admin about new verified customer
+    notifyAllAdmins({
+      title: "New customer verified",
+      message: `${customer.fullName} verified their email and is now active.`,
+      type: "success",
+      relatedEntityId: customer._id,
+    }).catch(() => {});
+    notifyAdminNewCustomer(customer).catch(() => {});
+
+    // Generate tokens for auto-login
+    const payload = { id: customer._id, role: 'customer', email: customer.email };
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '7d' });
+    const refreshToken = jwt.sign(payload, process.env.REFRESH_TOKEN_SECRET || 'refresh-secret', { expiresIn: '30d' });
+
     return res.json({
       success: true,
-      message: "Email verified successfully. You can log in now.",
+      message: "Email verified successfully. You are now logged in.",
+      data: {
+        accessToken,
+        refreshToken,
+        customer: {
+          id: customer._id,
+          email: customer.email,
+          fullName: customer.fullName,
+          role: 'customer',
+        },
+      },
     });
   }),
 );
