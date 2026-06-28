@@ -125,7 +125,7 @@ router.get('/available-jobs', requireWorker, asyncHandler(async (req, res) => {
   const bookings = await Booking.find({
     workerId: null,
     claimWorkerId: null,
-    status: 'open',
+    status: 'pending',
     isDeleted: false
   })
     .sort({ createdAt: -1 })

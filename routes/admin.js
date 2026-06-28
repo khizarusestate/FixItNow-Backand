@@ -378,7 +378,7 @@ router.get('/summary', requireAdmin, asyncHandler(async (req, res) => {
   const [totalBookings, pendingBookings, approvedBookings, totalWorkers, pendingWorkers, totalCustomers, totalServices, completedBookings] = await Promise.all([
     Booking.countDocuments({ isDeleted: false }),
     Booking.countDocuments({ status: 'claim-pending', isDeleted: false }),
-    Booking.countDocuments({ status: { $in: ['open', 'approved', 'pending'] }, isDeleted: false }),
+    Booking.countDocuments({ status: { $in: ['pending', 'claim-pending'] }, isDeleted: false }),
     Worker.countDocuments({ isDeleted: false }),
     Worker.countDocuments({ status: 'not_approved', isDeleted: false }),
     Customer.countDocuments({ isDeleted: false }),
@@ -459,8 +459,8 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   if (status) {
     if (status === 'worker-assigned') {
       query.status = { $in: ['worker-assigned', 'assigned', 'in-progress'] };
-    } else if (status === 'open') {
-      query.status = { $in: ['open', 'pending', 'approved'] };
+    } else if (status === 'pending') {
+      query.status = { $in: ['pending', 'claim-pending'] };
     } else if (status === 'cancelled') {
       query.status = { $in: ['cancelled', 'rejected'] };
     } else {
@@ -765,7 +765,7 @@ router.patch(
 // ─── PATCH /api/admin/bookings/:id/status ─────────────────────────────────────
 router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res) => {
   const { status } = req.body;
-  const validStatuses = ['pending', 'approved', 'assigned', 'in-progress', 'completed', 'rejected', 'cancelled'];
+  const validStatuses = ['pending', 'claim-pending', 'worker-assigned', 'completed', 'rejected', 'cancelled'];
 
   if (!status || !validStatuses.includes(status)) {
     return res.status(400).json({ success: false, message: `Status must be one of: ${validStatuses.join(', ')}.` });
@@ -820,8 +820,8 @@ router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res)
   }
 
   if (
-    (status === 'open' || status === 'approved') &&
-    !['open', 'approved', 'pending'].includes(previousStatus)
+    status === 'pending' &&
+    !['pending', 'claim-pending', 'worker-assigned', 'completed', 'rejected', 'cancelled'].includes(previousStatus)
   ) {
     notifyWorkersOfHighPriorityJob(
       booking.toObject?.() ? booking.toObject() : booking,
