@@ -142,7 +142,43 @@ router.get(
       return res.json({ success: true, data: [] });
     }
 
+    // Build service categories to match against
+    const workerServiceCategories = [
+      worker.primaryServiceCategory,
+      ...(worker.serviceCategories || [])
+    ].filter(Boolean);
+
+    // If worker has no categories, return no jobs
+    if (workerServiceCategories.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+        message: 'Please select a service category to view jobs.'
+      });
+    }
+
+    // Find bookings by category (case-insensitive)
+    const categoryQuery = {
+      $or: [
+        {
+          serviceCategory: {
+            $in: workerServiceCategories.map(cat =>
+              new RegExp(`^${cat}$`, 'i')
+            )
+          }
+        },
+        {
+          category: {
+            $in: workerServiceCategories.map(cat =>
+              new RegExp(`^${cat}$`, 'i')
+            )
+          }
+        }
+      ]
+    };
+
     const bookings = await Booking.find({
+      ...categoryQuery,
       status: { $in: OPEN_STATUSES },
       workerId: null,
       claimWorkerId: null,
