@@ -71,6 +71,57 @@ const refreshAdmin = (type) => {
   emitToAdmin('refresh', { type, timestamp: new Date().toISOString() });
 };
 
+// ─── GET /api/bookings ────────────────────────
+// Get bookings list (redirects to /my for authenticated users)
+router.get('/', optionalAuth, asyncHandler(async (req, res) => {
+  try {
+    // If user is authenticated, redirect to their bookings
+    if (req.userId) {
+      // Check if customer or worker
+      const customer = await Customer.findById(req.userId);
+      const worker = await Worker.findById(req.userId);
+      
+      if (customer) {
+        // Customer: return their bookings
+        const bookings = await Booking.find({ customerId: req.userId })
+          .sort({ createdAt: -1 })
+          .limit(50);
+        return res.json({
+          success: true,
+          data: bookings,
+          userType: 'customer'
+        });
+      } else if (worker) {
+        // Worker: return available jobs
+        const bookings = await Booking.find({
+          status: { $in: ['pending', 'claim-pending'] },
+          serviceCategory: { $in: worker.serviceCategories || [] }
+        })
+          .sort({ createdAt: -1 })
+          .limit(50);
+        return res.json({
+          success: true,
+          data: bookings,
+          userType: 'worker'
+        });
+      }
+    }
+    
+    // Unauthenticated: return empty list
+    res.json({
+      success: true,
+      data: [],
+      message: 'Login to view bookings'
+    });
+  } catch (error) {
+    logger.error('GET /bookings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch bookings'
+    });
+  }
+}));
+
 // ─── POST /api/bookings ────────────────────────
 // Create a new booking (customer only)
 // Global error handler for multer and middleware
