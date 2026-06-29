@@ -63,7 +63,7 @@ export function getBookingActionBlock(booking, action, context = {}) {
 }
 
 function getCustomerCancelBlock(status, serviceTitle) {
-  if (status === "open" || status === "pending") return null;
+  if (status === "pending") return null;
 
   const blocks = {
     rejected: blockPayload({

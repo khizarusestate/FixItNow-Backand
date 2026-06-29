@@ -28,18 +28,11 @@ export const WORKER_STATUS_VALUES = Object.values(WORKER_STATUS);
 
 // ─── Booking Statuses ────────────────────────────────────────────────────────────
 export const BOOKING_STATUS = {
-  OPEN: 'open',
+  PENDING: 'pending',
   CLAIM_PENDING: 'claim-pending',
   WORKER_ASSIGNED: 'worker-assigned',
-  IN_PROGRESS: 'in-progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
-  REJECTED: 'rejected',
-  /** @deprecated legacy — treated as open in code */
-  PENDING: 'pending',
-  APPROVED: 'approved',
-  ASSIGNED: 'assigned',
-  PENDING_CONFIRMATION: 'pending-confirmation',
 }
 
 export const BOOKING_STATUS_VALUES = Object.values(BOOKING_STATUS);

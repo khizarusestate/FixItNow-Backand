@@ -29,7 +29,7 @@ import {
 import { BOOKING_STATUS } from "../utils/constants.js";
 import { generateSecureFilename, validateFile } from "../utils/fileValidation.js";
 
-const OPEN_STATUSES = [BOOKING_STATUS.OPEN];
+const OPEN_STATUSES = [BOOKING_STATUS.PENDING];
 
 function jobAreaOnly(booking) {
   const label = getLocationLabel(booking);

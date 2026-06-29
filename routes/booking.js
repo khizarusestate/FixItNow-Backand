@@ -267,13 +267,13 @@ router.post('/',
         longitude: longitude != null && longitude !== '' ? Number(longitude) : null,
         placeId: placeId || '',
         notes: notes || '',
-        status: BOOKING_STATUS.OPEN,
+        status: BOOKING_STATUS.PENDING,
         paymentDetails: {
           totalAmount: servicePrice,
         },
         timeline: [
           {
-            status: BOOKING_STATUS.OPEN,
+            status: BOOKING_STATUS.PENDING,
             timestamp: new Date(),
             note: 'Booking created and visible to workers',
           },
