@@ -30,6 +30,7 @@ import fs from "fs";
 
 import routes from "./routes/index.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
+import checkMaintenanceMode from "./middleware/maintenanceMode.js";
 import { verifyToken } from "./utils/jwt.js";
 import logger from "./utils/logger.js";
 import {
@@ -425,7 +426,7 @@ app.use(express.json({ limit: "1mb", strict: true }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
-app.use("/api", routes);
+app.use("/api", checkMaintenanceMode, routes);
 
 app.get("/health", async (req, res) => {
   const dbOk = mongoose.connection.readyState === 1;

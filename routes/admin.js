@@ -20,6 +20,7 @@ import Worker from '../workerSchema.js';
 import Booking from '../bookingSchema.js';
 import Review from '../reviewSchema.js';
 import Notification from '../notificationSchema.js';
+import PlatformSettings from '../models/PlatformSettings.js';
 import Service from '../models/Service.js';
 import { createToken, createRefreshToken } from '../utils/jwt.js';
 import env from '../utils/env.js';
@@ -2307,5 +2308,75 @@ router.post(
     });
   }),
 );
+
+// ─── MAINTENANCE MODE (Super Admin Only) ───────────────────────────────────
+
+router.get('/maintenance-mode', requireAdmin, asyncHandler(async (req, res) => {
+  try {
+    let settings = await PlatformSettings.findOne().select('maintenanceMode');
+    if (!settings) {
+      settings = await PlatformSettings.create({});
+    }
+    return res.json({
+      success: true,
+      data: {
+        enabled: settings.maintenanceMode?.enabled || false,
+        message: settings.maintenanceMode?.message || '',
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}));
+
+router.patch('/maintenance-mode', requireAdmin, asyncHandler(async (req, res) => {
+  const { enabled, message } = req.body;
+  
+  // Check if super admin (only super admin can enable maintenance)
+  const isSuperAdmin = req.admin?.isSuperAdmin || false;
+  if (!isSuperAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only super admin can enable maintenance mode.',
+    });
+  }
+
+  try {
+    let settings = await PlatformSettings.findOne();
+    if (!settings) {
+      settings = new PlatformSettings();
+    }
+
+    settings.maintenanceMode = {
+      enabled: Boolean(enabled),
+      message: message || 'App is in maintenance. Please try again later.',
+      enabledAt: enabled ? new Date() : undefined,
+      enabledBy: enabled ? req.admin.id : undefined,
+    };
+    settings.lastModified = {
+      timestamp: new Date(),
+      by: 'super_admin',
+    };
+
+    await settings.save();
+
+    // Log the change
+    logger.info(`Maintenance mode ${enabled ? 'enabled' : 'disabled'}`, {
+      adminId: req.admin.id,
+      message: settings.maintenanceMode.message,
+    });
+
+    return res.json({
+      success: true,
+      message: `Maintenance mode ${enabled ? 'enabled' : 'disabled'}.`,
+      data: {
+        enabled: settings.maintenanceMode.enabled,
+        message: settings.maintenanceMode.message,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}));
 
 export default router;
