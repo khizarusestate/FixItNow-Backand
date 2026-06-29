@@ -246,6 +246,20 @@ router.post(
       email: email.toLowerCase().trim(),
       isDeleted: false,
     });
+    
+    // NEW: Check if email already used by a worker
+    const existingWorker = await Worker.findOne({
+      emailAddress: email.toLowerCase().trim(),
+      isDeleted: false,
+    });
+    
+    if (existingWorker) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is already registered as a worker account. You cannot create multiple account types with the same email.",
+      });
+    }
+    
     if (existingCustomer) {
       const pendingVerification =
         existingCustomer.isVerified === false ||
