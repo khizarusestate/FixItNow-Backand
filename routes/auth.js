@@ -1253,6 +1253,7 @@ router.post(
     const {
       emailAddress,
       password,
+      phoneNumber,
       cnicNumber,
       primaryServiceId,
       primaryServiceName,
@@ -1307,10 +1308,12 @@ router.post(
       });
     }
 
-    if (!worker.phoneNumber?.trim()) {
+    // Check phone: from worker record or from request body
+    const finalPhoneNumber = (worker.phoneNumber?.trim() || String(phoneNumber || "").trim());
+    if (!finalPhoneNumber) {
       return res.status(400).json({
         success: false,
-        message: "Phone number is missing from signup. Please contact support.",
+        message: "Phone number is required. Please provide your phone number.",
       });
     }
 
@@ -1353,6 +1356,11 @@ router.post(
     worker.primaryServiceName = serviceFields.primaryServiceName || "";
     worker.primaryServiceId = serviceFields.primaryServiceId || null;
     worker.signupStep = "complete";
+    
+    // Save phone number if provided in request (OAuth workers provide it here)
+    if (phoneNumber && String(phoneNumber).trim() && !worker.phoneNumber?.trim()) {
+      worker.phoneNumber = String(phoneNumber).trim();
+    }
 
     // Handle location update
     applyLocationUpdate(worker, req.body);
