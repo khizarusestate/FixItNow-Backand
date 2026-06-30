@@ -158,6 +158,42 @@ function bookingServiceKeys(booking) {
  * Service relevance 0–100.
  */
 export function getServiceMatchScore(worker, booking) {
+  const bookingTitle = normalizeServiceKey(booking.serviceTitle);
+  const bookingCategory = normalizeServiceKey(
+    booking.serviceCategory || booking.category,
+  );
+
+  // Check all worker services (new multiple services support)
+  if (worker.services && Array.isArray(worker.services)) {
+    for (const service of worker.services) {
+      const serviceName = normalizeServiceKey(service.serviceName);
+      const serviceCategory = normalizeServiceKey(service.serviceCategory);
+      
+      // Exact service match
+      if (serviceName && bookingTitle && serviceName === bookingTitle) {
+        return {
+          score: 100,
+          exactService: true,
+          sameCategory: true,
+          relatedService: false,
+          partialService: false,
+        };
+      }
+      
+      // Same category match
+      if (serviceCategory && bookingCategory && serviceCategory === bookingCategory) {
+        return {
+          score: 90,
+          exactService: false,
+          sameCategory: true,
+          relatedService: true,
+          partialService: false,
+        };
+      }
+    }
+  }
+
+  // Fall back to primary service check
   const workerCategory = normalizeServiceKey(worker.primaryServiceCategory);
   const workerServiceName = normalizeServiceKey(worker.primaryServiceName);
   const workerComposite =
@@ -166,11 +202,6 @@ export function getServiceMatchScore(worker, booking) {
           `${worker.primaryServiceCategory} - ${worker.primaryServiceName}`,
         )
       : "";
-
-  const bookingTitle = normalizeServiceKey(booking.serviceTitle);
-  const bookingCategory = normalizeServiceKey(
-    booking.serviceCategory || booking.category,
-  );
 
   if (workerServiceName && bookingTitle && workerServiceName === bookingTitle) {
     return {
