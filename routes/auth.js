@@ -109,6 +109,8 @@ function formatWorkerData(worker) {
     needsProfessionalProfile,
     emailAddress: worker.emailAddress,
     phoneNumber: worker.phoneNumber,
+    authProvider: worker.authProvider || "local",
+    googleId: worker.googleId || null,
     cnicNumber: worker.cnicNumber,
     serviceCategory: worker.primaryServiceCategory,
     primaryServiceCategory: worker.primaryServiceCategory,
@@ -1315,12 +1317,18 @@ router.post(
       });
     }
 
-    // Check phone: from worker record or from request body
-    const finalPhoneNumber = (worker.phoneNumber?.trim() || String(phoneNumber || "").trim());
+    // Phone: email signup collects it in step 1; OAuth workers provide it here.
+    const finalPhoneNumber = (
+      worker.phoneNumber?.trim() || String(phoneNumber || "").trim()
+    );
     if (!finalPhoneNumber) {
+      const needsPhoneFromForm =
+        worker.authProvider === "google" || Boolean(worker.googleId);
       return res.status(400).json({
         success: false,
-        message: "Phone number is required. Please provide your phone number.",
+        message: needsPhoneFromForm
+          ? "Phone number is required. Please provide your phone number."
+          : "Phone number is missing on your account. Contact support.",
       });
     }
 
@@ -1357,9 +1365,10 @@ router.post(
     applyWorkerServices(worker, services);
     worker.signupStep = "complete";
     
-    // Save phone number if provided in request (OAuth workers provide it here)
-    if (phoneNumber && String(phoneNumber).trim() && !worker.phoneNumber?.trim()) {
+    if (phoneNumber && String(phoneNumber).trim()) {
       worker.phoneNumber = String(phoneNumber).trim();
+    } else if (!worker.phoneNumber?.trim() && finalPhoneNumber) {
+      worker.phoneNumber = finalPhoneNumber;
     }
 
     // Handle location update
