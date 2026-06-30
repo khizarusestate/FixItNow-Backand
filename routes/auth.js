@@ -296,18 +296,6 @@ router.post(
       });
     }
 
-    // Check if email exists in workers (one email = one account rule)
-    const existingWorker = await Worker.findOne({
-      emailAddress: email.toLowerCase().trim(),
-    });
-    if (existingWorker) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "This email is already registered as a worker. Please use a different email.",
-      });
-    }
-
     const verificationCode = generateVerificationCode();
     const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
