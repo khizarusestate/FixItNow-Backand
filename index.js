@@ -350,7 +350,17 @@ app.use(
   "/uploads",
   cors(corsOptions),
   (req, res, next) => {
+    // Set explicit CORS headers for images
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Cache-Control", "public, max-age=2592000"); // 30 days
+    
+    // Handle preflight requests
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
     next();
   },
   async (req, res, next) => {
