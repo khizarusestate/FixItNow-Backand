@@ -55,6 +55,17 @@ const workerSchema = new mongoose.Schema({
       trim: true,
     },
   ],
+  // New: Array of service IDs for multiple service selection
+  services: [
+    {
+      serviceId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Service",
+      },
+      serviceName: String,
+      serviceCategory: String,
+    },
+  ],
   primaryServiceCategory: {
     type: String,
     default: "",
