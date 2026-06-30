@@ -19,40 +19,41 @@ const notificationPreferenceSchema = new mongoose.Schema(
       enum: ['admin', 'worker', 'customer'],
       required: true,
     },
-    // Push notifications (browser/device)
+    // Push notifications (browser/device) - OFF by default
     pushEnabled: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     // In-app notifications (notification bell)
     inAppEnabled: {
       type: Boolean,
       default: true,
     },
-    // Email notifications (future)
+    // Email notifications (account verification and approvals only)
     emailEnabled: {
       type: Boolean,
-      default: false,
+      default: true,
     },
-    // Specific notification types that can be toggled
+    // Specific notification types - only high/very high priority
     notificationTypes: {
-      // Admin notifications
-      newBooking: { type: Boolean, default: true },
-      newWorker: { type: Boolean, default: true },
-      newCustomer: { type: Boolean, default: true },
-      claimPending: { type: Boolean, default: true },
-      newReview: { type: Boolean, default: true },
-      newAdvertisement: { type: Boolean, default: true },
+      // Admin notifications (Very High Priority)
+      newWorkerApproval: { type: Boolean, default: true },      // New Worker Approval Request
+      newCustomerRegistration: { type: Boolean, default: true }, // New Customer Registration
+      newBooking: { type: Boolean, default: true },              // New Booking
+      newReview: { type: Boolean, default: true },               // New Review
+      newAdvertisement: { type: Boolean, default: true },        // New Advertisement
       
-      // Worker notifications
+      // Worker notifications (High Priority)
       newJob: { type: Boolean, default: true },
-      claimApproved: { type: Boolean, default: true },
-      claimRejected: { type: Boolean, default: true },
       
-      // Customer notifications
-      bookingReceived: { type: Boolean, default: true },
+      // Customer notifications (High Priority)
+      bookingSubmitted: { type: Boolean, default: true },
       workerAssigned: { type: Boolean, default: true },
-      jobCompleted: { type: Boolean, default: true },
+    },
+    // Email-only notifications (account related)
+    emailNotifications: {
+      accountVerification: { type: Boolean, default: true },
+      workerApproved: { type: Boolean, default: true },
     },
     updatedAt: {
       type: Date,
