@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { requireWorker, requireCustomer, optionalAuth } from '../middleware/auth.js';
-import { asyncHandler } from '../middleware/asyncHandler.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 import Advertisement from '../models/Advertisement.js';
-import { uploadToCloudinary } from '../services/upload.js';
 
 const router = Router();
 
