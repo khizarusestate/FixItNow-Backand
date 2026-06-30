@@ -137,10 +137,78 @@ router.get(
   })
 );
 
+// ─── GET /api/advertisements/my (list own advertisements)
+router.get(
+  '/my',
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    const userId = req.worker?.id || req.customer?.id;
+    const userType = req.worker ? 'worker' : req.customer ? 'customer' : null;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    try {
+      const query = {
+        isDeleted: false,
+      };
+
+      if (userType === 'worker') {
+        query.workerId = userId;
+      } else if (userType === 'customer') {
+        query.customerId = userId;
+      }
+
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const skip = (page - 1) * limit;
+
+      const advertisements = await Advertisement.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      const total = await Advertisement.countDocuments(query);
+
+      res.json({
+        success: true,
+        data: advertisements,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit),
+        },
+      });
+    } catch (error) {
+      console.error('[advertisements /my] Error fetching user advertisements:', {
+        userId,
+        userType,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  })
+);
+
 // ─── GET /api/advertisements/:id (view single)
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
+    // Validate ID format before querying
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Advertisement not found.',
+      });
+    }
+
     const advertisement = await Advertisement.findOne({
       _id: req.params.id,
       isDeleted: false,

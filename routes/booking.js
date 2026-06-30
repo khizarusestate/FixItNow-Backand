@@ -43,7 +43,7 @@ const storage = multer.diskStorage({
 const fileFilter = (req, file, cb) => {
   const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
   const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.pdf'];
-  
+
   if (allowedMimes.includes(file.mimetype) && allowedExts.includes(path.extname(file.originalname).toLowerCase())) {
     cb(null, true);
   } else {
@@ -59,11 +59,11 @@ const paymentReceiptUpload = multer({
 
 // Helper to emit notifications to admin
 const notifyAdmin = (type, action, message) => {
-  emitToAdmin('notification', { 
-    type, 
-    action, 
+  emitToAdmin('notification', {
+    type,
+    action,
     message,
-    timestamp: new Date().toISOString() 
+    timestamp: new Date().toISOString()
   });
 };
 
@@ -80,7 +80,7 @@ router.get('/', optionalAuth, asyncHandler(async (req, res) => {
       // Check if customer or worker
       const customer = await Customer.findById(req.userId);
       const worker = await Worker.findById(req.userId);
-      
+
       if (customer) {
         // Customer: return their bookings
         const bookings = await Booking.find({ customerId: req.userId })
@@ -106,7 +106,7 @@ router.get('/', optionalAuth, asyncHandler(async (req, res) => {
         });
       }
     }
-    
+
     // Unauthenticated: return empty list
     res.json({
       success: true,
@@ -229,10 +229,10 @@ router.post('/',
             message: 'Service not found'
           });
         }
-        
+
         servicePrice = service.price || 0;
         serviceCategory = service.category || category || '';
-        
+
         if (servicePrice <= 0) {
           logger.warn('Service has zero or invalid price', { serviceId, servicePrice });
           return res.status(400).json({
@@ -267,13 +267,13 @@ router.post('/',
         longitude: longitude != null && longitude !== '' ? Number(longitude) : null,
         placeId: placeId || '',
         notes: notes || '',
-        status: BOOKING_STATUS.PENDING,
+        status: BOOKING_STATUS.APPROVED,
         paymentDetails: {
           totalAmount: servicePrice,
         },
         timeline: [
           {
-            status: BOOKING_STATUS.PENDING,
+            status: BOOKING_STATUS.APPROVED,
             timestamp: new Date(),
             note: 'Booking created and visible to workers',
           },
@@ -282,7 +282,7 @@ router.post('/',
 
       if (customer) {
         await Customer.findByIdAndUpdate(customer._id, {
-          $inc: { totalBookings: 1, pendingBookings: 1 },
+          $inc: { totalBookings: 1 },
           lastBooking: new Date(),
         });
 
@@ -292,7 +292,7 @@ router.post('/',
           title: 'Booking submitted',
           message: `We received your request for ${booking.serviceTitle}. Workers can claim it now.`,
           type: 'info',
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       notifyAdmin('bookings', 'created', `New booking: ${booking.serviceTitle} by ${booking.customerName}`);
@@ -302,17 +302,17 @@ router.post('/',
         title: 'New booking',
         message: `${booking.customerName} booked ${booking.serviceTitle}.`,
         type: 'booking',
-      }).catch(() => {});
+      }).catch(() => { });
 
       // Send notifications via notification service
-      notifyAdminNewBooking(booking).catch(() => {});
+      notifyAdminNewBooking(booking).catch(() => { });
       if (customer) {
-        notifyCustomerBookingReceived(customer._id, booking).catch(() => {});
+        notifyCustomerBookingReceived(customer._id, booking).catch(() => { });
       }
 
       notifyWorkersOfHighPriorityJob(
         booking.toObject?.() ? booking.toObject() : booking,
-      ).catch(() => {});
+      ).catch(() => { });
 
       return res.status(201).json({
         success: true,
@@ -420,8 +420,8 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
   }
 
   refreshAdmin('bookings');
-  cacheDelByPrefix('fixitnow:admin:summary').catch(() => {});
-  cacheDelByPrefix('fixitnow:public:services').catch(() => {});
+  cacheDelByPrefix('fixitnow:admin:summary').catch(() => { });
+  cacheDelByPrefix('fixitnow:public:services').catch(() => { });
   notifyAdmin(
     'bookings',
     'cancelled',
@@ -433,7 +433,7 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
     message: `${booking.customerName} cancelled ${booking.serviceTitle}.`,
     type: 'warning',
     relatedEntityId: booking._id,
-  }).catch(() => {});
+  }).catch(() => { });
 
   const cancelPayload = {
     bookingId: booking._id,
@@ -457,7 +457,7 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
       message: `${booking.serviceTitle} was cancelled by the customer.`,
       type: 'warning',
       relatedEntityId: booking._id,
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   createNotification({
@@ -467,7 +467,7 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
     message: `Your booking for ${booking.serviceTitle} was cancelled.`,
     type: 'warning',
     relatedEntityId: booking._id,
-  }).catch(() => {});
+  }).catch(() => { });
 
   return res.json({
     success: true,
@@ -566,10 +566,10 @@ router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
       `Job completed: ${booking.serviceTitle} by ${worker.fullName}. Rating: ${rating} stars. Commission: ₨${serviceFee}`,
     );
     refreshAdmin('revenue');
-    
+
     // Send completion notifications via notification service
-    notifyCustomerJobCompleted(req.customer.id, booking).catch(() => {});
-    
+    notifyCustomerJobCompleted(req.customer.id, booking).catch(() => { });
+
     emitToUser(worker._id.toString(), 'job-completed', {
       bookingId: booking._id,
       serviceTitle: booking.serviceTitle,
@@ -610,7 +610,7 @@ router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
       type: 'urgent',
       relatedEntityId: booking._id,
       pushOptions: { urgency: 'high' },
-    }).catch(() => {});
+    }).catch(() => { });
     emitToUser(String(req.customer.id), 'booking-status-update', {
       bookingId: booking._id,
       serviceTitle: booking.serviceTitle,
