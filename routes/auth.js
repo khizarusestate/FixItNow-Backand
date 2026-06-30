@@ -471,7 +471,7 @@ router.post(
 
     return res.json({
       success: true,
-      message: "Email verified successfully. You are now logged in.",
+      message: "Account Verification Successful. Logging In...",
       data: {
         accessToken,
         refreshToken,
@@ -480,6 +480,7 @@ router.post(
           email: customer.email,
           fullName: customer.fullName,
           role: 'customer',
+          needsProfileCompletion: !customer.phoneNumber || !customer.location,
         },
       },
     });
