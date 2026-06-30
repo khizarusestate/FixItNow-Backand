@@ -97,6 +97,46 @@ router.get(
   })
 );
 
+// ─── GET /api/advertisements/active (list approved active only)
+router.get(
+  '/active',
+  asyncHandler(async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const query = {
+      isDeleted: false,
+      status: 'approved',
+      expiresAt: { $gt: new Date() },
+    };
+
+    if (req.query.service) {
+      query.service = { $regex: req.query.service, $options: 'i' };
+    }
+
+    const advertisements = await Advertisement.find(query)
+      .populate('workerId', 'name phoneNumber profilePicture')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await Advertisement.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: advertisements,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    });
+  })
+);
+
 // ─── GET /api/advertisements/:id (view single)
 router.get(
   '/:id',
