@@ -474,20 +474,44 @@ export function calculateRankScore(worker, booking, options = {}) {
   };
 }
 
-function matchTier(job) {
-  if (job._matchMeta?.exactService) return 3;
-  if (job._matchMeta?.sameCategory) return 2;
-  if (!job._demoted) return 1;
-  return 0;
+/**
+ * Whether booking service matches any of the worker's services.
+ */
+export function bookingMatchesWorkerServices(worker, booking) {
+  const service = getServiceMatchScore(worker, booking);
+  if (service.exactService) return true;
+  if (worker.services?.length) {
+    const bookingTitle = normalizeServiceKey(booking.serviceTitle);
+    return worker.services.some(
+      (s) =>
+        normalizeServiceKey(s.serviceName) === bookingTitle && bookingTitle,
+    );
+  }
+  return service.score >= 70;
 }
 
-function compareRankedJobs(a, b) {
-  const tierDiff = matchTier(b) - matchTier(a);
-  if (tierDiff !== 0) return tierDiff;
+/** Priority tier: very-high | high | medium | low */
+export function getJobMatchPriority(worker, booking) {
+  if (!bookingMatchesWorkerServices(worker, booking)) {
+    return { tier: "low", label: "Low", rank: 0 };
+  }
 
-  const aDemoted = Boolean(a._demoted);
-  const bDemoted = Boolean(b._demoted);
-  if (aDemoted !== bDemoted) return aDemoted ? 1 : -1;
+  const location = getLocationMatchScore(worker, booking);
+  if (location.sameArea) {
+    return { tier: "very-high", label: "Very High", rank: 4 };
+  }
+  if (location.sameCity) {
+    return { tier: "high", label: "High", rank: 3 };
+  }
+  return { tier: "medium", label: "Medium", rank: 2 };
+}
+
+const PRIORITY_RANK = { "very-high": 4, high: 3, medium: 2, low: 1 };
+
+function compareRankedJobs(a, b) {
+  const aPriority = a._matchPriority?.rank ?? PRIORITY_RANK[a._matchPriority?.tier] ?? 0;
+  const bPriority = b._matchPriority?.rank ?? PRIORITY_RANK[b._matchPriority?.tier] ?? 0;
+  if (bPriority !== aPriority) return bPriority - aPriority;
 
   const rankDiff = (b._matchScore ?? 0) - (a._matchScore ?? 0);
   if (rankDiff !== 0) return rankDiff;
@@ -495,10 +519,6 @@ function compareRankedJobs(a, b) {
   const distA = a._distanceKm ?? Number.POSITIVE_INFINITY;
   const distB = b._distanceKm ?? Number.POSITIVE_INFINITY;
   if (distA !== distB) return distA - distB;
-
-  const serviceDiff =
-    (b._matchMeta?.serviceScore ?? 0) - (a._matchMeta?.serviceScore ?? 0);
-  if (serviceDiff !== 0) return serviceDiff;
 
   return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
 }
@@ -510,12 +530,14 @@ function compareRankedJobs(a, b) {
 export function rankBookingsForWorker(worker, bookings, options = {}) {
   const scored = bookings.map((booking) => {
     const result = calculateRankScore(worker, booking, options);
+    const priority = getJobMatchPriority(worker, booking);
     return {
       ...booking,
       _matchScore: result._matchScore,
       _distanceKm: result._distanceKm,
       _demoted: result._demoted,
       _matchMeta: result._matchMeta,
+      _matchPriority: priority,
     };
   });
 
@@ -542,6 +564,7 @@ export function sanitizeBookingForWorker(booking) {
     _distanceKm: booking._distanceKm ?? null,
     _demoted: booking._demoted ?? false,
     _matchMeta: booking._matchMeta,
+    _matchPriority: booking._matchPriority,
   };
 }
 
@@ -576,6 +599,7 @@ export function formatAvailableJobForWorker(booking, customer = null) {
     _distanceKm: booking._distanceKm ?? null,
     _demoted: booking._demoted ?? false,
     _matchMeta: booking._matchMeta,
+    _matchPriority: booking._matchPriority,
   };
 }
 

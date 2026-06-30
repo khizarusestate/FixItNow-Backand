@@ -117,7 +117,7 @@ router.get(
       isDeleted: false,
     })
       .select(
-        "primaryServiceCategory serviceCategories location serviceArea address latitude longitude status availability",
+        "primaryServiceCategory primaryServiceName primaryServiceId services serviceCategories location serviceArea address latitude longitude status availability",
       )
       .lean();
 
@@ -142,49 +142,27 @@ router.get(
       return res.json({ success: true, data: [] });
     }
 
-    // Build service categories to match against
-    const workerServiceCategories = [
-      worker.primaryServiceCategory,
-      ...(worker.serviceCategories || [])
-    ].filter(Boolean);
+    const hasServices =
+      (worker.services && worker.services.length > 0) ||
+      worker.primaryServiceName ||
+      worker.primaryServiceCategory;
 
-    // If worker has no categories, return no jobs
-    if (workerServiceCategories.length === 0) {
+    if (!hasServices) {
       return res.json({
         success: true,
         data: [],
-        message: 'Please select a service category to view jobs.'
+        message: "Please select at least one service to view jobs.",
       });
     }
 
-    // Find bookings by category (case-insensitive)
-    const categoryQuery = {
-      $or: [
-        {
-          serviceCategory: {
-            $in: workerServiceCategories.map(cat =>
-              new RegExp(`^${cat}$`, 'i')
-            )
-          }
-        },
-        {
-          category: {
-            $in: workerServiceCategories.map(cat =>
-              new RegExp(`^${cat}$`, 'i')
-            )
-          }
-        }
-      ]
-    };
-
     const bookings = await Booking.find({
-      ...categoryQuery,
       status: { $in: OPEN_STATUSES },
       workerId: null,
       claimWorkerId: null,
       isDeleted: false,
     })
       .populate("customerId", "fullName email phone")
+      .sort({ createdAt: -1 })
       .lean();
 
     const maxRadiusKm = Number(req.query.maxRadiusKm) || undefined;

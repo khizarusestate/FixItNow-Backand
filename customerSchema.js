@@ -104,10 +104,10 @@ const customerSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
-  /** When false, web push (device) is not sent; in-app bell/socket still works. */
+  /** When false, web push (device) is not sent until user opts in. */
   devicePushEnabled: {
     type: Boolean,
-    default: true,
+    default: false,
   },
   status: {
     type: String,

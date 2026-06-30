@@ -49,6 +49,61 @@ export async function resolveWorkerServiceFields(body = {}) {
   };
 }
 
+/** Resolve worker services array from request body. */
+export async function resolveWorkerServicesArray(body = {}) {
+  let raw = body.services;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = [];
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) {
+    const primary = await resolveWorkerServiceFields(body);
+    if (primary.primaryServiceId) {
+      return [
+        {
+          serviceId: primary.primaryServiceId,
+          serviceName: primary.primaryServiceName,
+          serviceCategory: primary.primaryServiceCategory,
+        },
+      ];
+    }
+    return [];
+  }
+
+  const resolved = [];
+  for (const entry of raw.slice(0, 5)) {
+    const fields = await resolveWorkerServiceFields({
+      primaryServiceId: entry.serviceId || entry.primaryServiceId,
+      primaryServiceName: entry.serviceName || entry.primaryServiceName,
+      primaryServiceCategory: entry.serviceCategory || entry.primaryServiceCategory,
+    });
+    if (fields.primaryServiceId || fields.primaryServiceName) {
+      resolved.push({
+        serviceId: fields.primaryServiceId,
+        serviceName: fields.primaryServiceName,
+        serviceCategory: fields.primaryServiceCategory,
+      });
+    }
+  }
+  return resolved;
+}
+
+/** Apply services array to worker document; sets primary from first service. */
+export function applyWorkerServices(worker, services = []) {
+  if (!services.length) return;
+  worker.services = services;
+  const primary = services[0];
+  worker.primaryServiceId = primary.serviceId || null;
+  worker.primaryServiceName = primary.serviceName || "";
+  worker.primaryServiceCategory = primary.serviceCategory || "";
+  worker.serviceCategories = [
+    ...new Set(services.map((s) => s.serviceCategory).filter(Boolean)),
+  ];
+}
+
 export function formatWorkerServiceLabel(worker) {
   const cat = worker?.primaryServiceCategory || "";
   const name = worker?.primaryServiceName || "";

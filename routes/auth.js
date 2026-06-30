@@ -10,6 +10,8 @@ import Admin from "../models/Admin.js";
 import Booking from "../bookingSchema.js";
 import Review from "../reviewSchema.js";
 import Notification from "../notificationSchema.js";
+import Advertisement from "../models/Advertisement.js";
+import PushSubscription from "../pushSubscriptionSchema.js";
 import {
   createToken,
   createAccessToken,
@@ -42,7 +44,7 @@ import {
   verifyGoogleIdToken,
   isGoogleAuthEnabled,
 } from "../services/googleAuth.js";
-import { resolveWorkerServiceFields } from "../utils/workerServiceFields.js";
+import { resolveWorkerServiceFields, resolveWorkerServicesArray, applyWorkerServices } from "../utils/workerServiceFields.js";
 import { addEmailJob } from "../utils/emailQueue.js";
 import { getCache, setCache } from "../utils/cache.js";
 
@@ -86,7 +88,7 @@ function formatCustomerData(customer) {
     phone: customer.phone,
     ...loc,
     profilePicture: customer.profilePicture,
-    devicePushEnabled: customer.devicePushEnabled !== false,
+    devicePushEnabled: Boolean(customer.devicePushEnabled),
     isActive: customer.isActive !== false,
     status: customer.status,
     createdAt: customer.createdAt,
@@ -113,9 +115,10 @@ function formatWorkerData(worker) {
     primaryServiceName: worker.primaryServiceName || "",
     primaryServiceId: worker.primaryServiceId || null,
     serviceCategories: worker.serviceCategories,
+    services: worker.services || [],
     ...formatLocationResponse(worker),
     profilePicture: worker.profilePicture,
-    devicePushEnabled: worker.devicePushEnabled !== false,
+    devicePushEnabled: Boolean(worker.devicePushEnabled),
     availability: worker.availability,
     status: worker.status,
     joinDate: worker.joinDate,
@@ -452,26 +455,42 @@ router.post(
     }).catch(() => {});
     notifyAdminNewCustomer(customer).catch(() => {});
 
-    // Generate tokens for auto-login
-    const payload = { id: customer._id, role: 'customer', email: customer.email };
-    const accessToken = jwt.sign(payload, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '7d' });
-    const refreshToken = jwt.sign(payload, process.env.REFRESH_TOKEN_SECRET || 'refresh-secret', { expiresIn: '30d' });
+    const tokenPayload = {
+      id: customer._id,
+      role: "customer",
+      email: customer.email,
+    };
+    const accessToken = createToken(tokenPayload);
+    let refreshToken;
+    if (env.USE_REFRESH_TOKENS) {
+      refreshToken = await createRefreshToken(
+        customer._id,
+        "customer",
+        req,
+        30,
+      );
+    }
 
-    return res.json({
-      success: true,
-      message: "Account Verification Successful. Logging In...",
-      data: {
+    const customerPayload = {
+      ...formatCustomerData(customer),
+      type: "customer",
+      needsProfileCompletion:
+        !String(customer.phone || "").trim() ||
+        !String(getLocationLabel(customer) || "").trim(),
+    };
+
+    return res.json(
+      attachAuthToResponse(res, {
         accessToken,
         refreshToken,
-        customer: {
-          id: customer._id,
-          email: customer.email,
-          fullName: customer.fullName,
-          role: 'customer',
-          needsProfileCompletion: !customer.phoneNumber || !customer.location,
+        body: {
+          success: true,
+          autoLogin: true,
+          message: "Account Verification Successful. Logging In...",
+          customer: customerPayload,
         },
-      },
-    });
+      }),
+    );
   }),
 );
 
@@ -1313,16 +1332,11 @@ router.post(
       });
     }
 
-    const serviceFields = await resolveWorkerServiceFields({
-      primaryServiceId,
-      primaryServiceName,
-      primaryServiceCategory,
-      serviceCategory: req.body.serviceCategory,
-    });
-    if (!serviceFields.primaryServiceCategory) {
+    const services = await resolveWorkerServicesArray(req.body);
+    if (services.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Trade / service is required.",
+        message: "At least one service is required.",
       });
     }
 
@@ -1340,9 +1354,7 @@ router.post(
     }
 
     worker.cnicNumber = cnicStored;
-    worker.primaryServiceCategory = serviceFields.primaryServiceCategory;
-    worker.primaryServiceName = serviceFields.primaryServiceName || "";
-    worker.primaryServiceId = serviceFields.primaryServiceId || null;
+    applyWorkerServices(worker, services);
     worker.signupStep = "complete";
     
     // Save phone number if provided in request (OAuth workers provide it here)
@@ -1655,10 +1667,16 @@ router.delete(
     }
 
     const deletedAt = new Date();
-    await Booking.updateMany(
-      { customerId, isDeleted: { $ne: true } },
-      { $set: { isDeleted: true, deletedAt } },
-    );
+    await Promise.all([
+      Booking.updateMany(
+        { customerId, isDeleted: { $ne: true } },
+        { $set: { isDeleted: true, deletedAt } },
+      ),
+      Review.deleteMany({ customerId }),
+      Notification.deleteMany({ userId: customerId }),
+      Advertisement.deleteMany({ customerId }),
+      PushSubscription.deleteMany({ userId: customerId, userRole: "customer" }),
+    ]);
     await Customer.findByIdAndUpdate(customerId, {
       isDeleted: true,
       deletedAt,
@@ -1721,10 +1739,16 @@ router.delete(
     }
 
     const deletedAt = new Date();
-    await Booking.updateMany(
-      { workerId, isDeleted: { $ne: true } },
-      { $set: { isDeleted: true, deletedAt } },
-    );
+    await Promise.all([
+      Booking.updateMany(
+        { workerId, isDeleted: { $ne: true } },
+        { $set: { isDeleted: true, deletedAt } },
+      ),
+      Review.deleteMany({ workerId }),
+      Notification.deleteMany({ userId: workerId }),
+      Advertisement.deleteMany({ workerId }),
+      PushSubscription.deleteMany({ userId: workerId, userRole: "worker" }),
+    ]);
     await Worker.findByIdAndUpdate(workerId, {
       isDeleted: true,
       deletedAt,

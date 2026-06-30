@@ -17,7 +17,7 @@ import { BOOKING_ACTION, rejectBookingAction } from '../utils/bookingActions.js'
 import { applyLocationUpdate, formatLocationResponse, getLocationLabel } from '../utils/locationFields.js';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
 import { normalizeCnic } from '../utils/cnic.js';
-import { resolveWorkerServiceFields } from '../utils/workerServiceFields.js';
+import { resolveWorkerServiceFields, resolveWorkerServicesArray, applyWorkerServices } from '../utils/workerServiceFields.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,10 +77,11 @@ const toWorkerProfilePayload = (worker) => {
     primaryServiceName: worker.primaryServiceName || '',
     primaryServiceId: worker.primaryServiceId || null,
     serviceCategories: worker.serviceCategories,
+    services: worker.services || [],
     cnicNumber: worker.cnicNumber,
     ...loc,
     profilePicture: worker.profilePicture,
-    devicePushEnabled: worker.devicePushEnabled !== false,
+    devicePushEnabled: Boolean(worker.devicePushEnabled),
     status: worker.status,
     availability: worker.availability,
     joinDate: worker.joinDate,
@@ -203,16 +204,21 @@ router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
     }
     updateFields.cnicNumber = normalized;
   }
-  if (primaryServiceCategory !== undefined || req.body.primaryServiceId !== undefined || req.body.primaryServiceName !== undefined) {
-    const serviceFields = await resolveWorkerServiceFields(req.body);
-    if (serviceFields.primaryServiceCategory) {
-      updateFields.primaryServiceCategory = serviceFields.primaryServiceCategory;
-    }
-    if (serviceFields.primaryServiceName !== undefined) {
-      updateFields.primaryServiceName = serviceFields.primaryServiceName;
-    }
-    if (serviceFields.primaryServiceId !== undefined) {
-      updateFields.primaryServiceId = serviceFields.primaryServiceId;
+  if (primaryServiceCategory !== undefined || req.body.primaryServiceId !== undefined || req.body.primaryServiceName !== undefined || req.body.services !== undefined) {
+    const services = await resolveWorkerServicesArray(req.body);
+    if (services.length > 0) {
+      applyWorkerServices(updateFields, services);
+    } else {
+      const serviceFields = await resolveWorkerServiceFields(req.body);
+      if (serviceFields.primaryServiceCategory) {
+        updateFields.primaryServiceCategory = serviceFields.primaryServiceCategory;
+      }
+      if (serviceFields.primaryServiceName !== undefined) {
+        updateFields.primaryServiceName = serviceFields.primaryServiceName;
+      }
+      if (serviceFields.primaryServiceId !== undefined) {
+        updateFields.primaryServiceId = serviceFields.primaryServiceId;
+      }
     }
   }
   if (serviceCategories !== undefined) updateFields.serviceCategories = serviceCategories;
