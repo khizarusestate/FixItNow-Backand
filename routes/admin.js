@@ -1520,10 +1520,24 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (!existing) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
+
+  // Force logout if worker is logged in
   if (existing.status !== WORKER_STATUS.INACTIVE) {
-    return res.status(400).json({
-      success: false,
-      message: 'Worker must be logged out (inactive) before the account can be deleted.',
+    try {
+      const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
+      await revokeAllUserRefreshTokens(workerId, "worker");
+    } catch (err) {
+      logger.warn('Failed to revoke tokens before deletion', { error: err.message });
+    }
+    
+    // Mark as inactive/disabled
+    existing.status = WORKER_STATUS.INACTIVE;
+    existing.isDisabled = true;
+    await existing.save();
+    
+    // Notify worker to logout
+    emitToUser(String(workerId), 'force-logout', {
+      message: 'Your account has been disabled by admin. Your session has been terminated.',
     });
   }
 
@@ -1541,9 +1555,9 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
-  // Notify the deleted worker to logout
+  // Notify the deleted worker
   emitToUser(String(workerId), 'account-deleted', {
-    message: 'Your account has been deleted by the admin. Please sign up again to use the app.',
+    message: 'Your account has been permanently deleted by the administrator.',
     deletedAt: new Date().toISOString()
   });
 
