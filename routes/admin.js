@@ -1521,44 +1521,43 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
-  // Force logout if worker is logged in
-  if (existing.status !== WORKER_STATUS.INACTIVE) {
-    try {
-      const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
-      await revokeAllUserRefreshTokens(workerId, "worker");
-    } catch (err) {
-      logger.warn('Failed to revoke tokens before deletion', { error: err.message });
-    }
-    
-    // Mark as inactive/disabled
-    existing.status = WORKER_STATUS.INACTIVE;
-    existing.isDisabled = true;
-    await existing.save();
-    
-    // Notify worker to logout
-    emitToUser(String(workerId), 'force-logout', {
-      message: 'Your account has been disabled by admin. Your session has been terminated.',
-    });
+  // ALWAYS revoke tokens - admin can delete anytime
+  try {
+    const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
+    await revokeAllUserRefreshTokens(workerId, "worker");
+  } catch (err) {
+    logger.warn('Failed to revoke tokens before deletion', { error: err.message });
   }
 
   const deletedAt = new Date();
+  
+  // Delete all related bookings
   await Booking.updateMany(
     { workerId, isDeleted: { $ne: true } },
     { $set: { isDeleted: true, deletedAt } },
   );
+  
+  // Delete the worker account
   const worker = await Worker.findByIdAndUpdate(
     workerId,
-    { isDeleted: true, deletedAt, status: WORKER_STATUS.INACTIVE },
+    { 
+      isDeleted: true, 
+      deletedAt, 
+      status: WORKER_STATUS.INACTIVE,
+      isDisabled: true 
+    },
     { new: true },
   );
+  
   if (!worker) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
-  // Notify the deleted worker
+  // CRITICAL: Notify worker of account deletion with proper event
   emitToUser(String(workerId), 'account-deleted', {
-    message: 'Your account has been permanently deleted by the administrator.',
-    deletedAt: new Date().toISOString()
+    message: 'Your account has been deleted by administrator',
+    type: 'account-deleted',
+    timestamp: new Date().toISOString()
   });
 
   emitRefresh('workers');
@@ -1570,6 +1569,67 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   });
 
   return res.json({ success: true, message: 'Worker deleted successfully.' });
+}));
+
+// ─── DELETE /api/admin/customers/:id ───────────────────────────────────────────
+router.delete('/customers/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const customerId = req.params.id;
+  if (!mongoose.Types.ObjectId.isValid(customerId)) {
+    return res.status(400).json({ success: false, message: 'Invalid customer ID.' });
+  }
+
+  const existing = await Customer.findOne({ _id: customerId, isDeleted: false });
+  if (!existing) {
+    return res.status(404).json({ success: false, message: 'Customer not found.' });
+  }
+
+  // ALWAYS revoke tokens - admin can delete anytime
+  try {
+    const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
+    await revokeAllUserRefreshTokens(customerId, "customer");
+  } catch (err) {
+    logger.warn('Failed to revoke tokens before deletion', { error: err.message });
+  }
+
+  const deletedAt = new Date();
+  
+  // Delete all related bookings
+  await Booking.updateMany(
+    { customerId, isDeleted: { $ne: true } },
+    { $set: { isDeleted: true, deletedAt } },
+  );
+  
+  // Delete the customer account
+  const customer = await Customer.findByIdAndUpdate(
+    customerId,
+    { 
+      isDeleted: true, 
+      deletedAt,
+      isDisabled: true 
+    },
+    { new: true },
+  );
+  
+  if (!customer) {
+    return res.status(404).json({ success: false, message: 'Customer not found.' });
+  }
+
+  // CRITICAL: Notify customer of account deletion
+  emitToUser(String(customerId), 'account-deleted', {
+    message: 'Your account has been deleted by administrator',
+    type: 'account-deleted',
+    timestamp: new Date().toISOString()
+  });
+
+  emitRefresh('customers');
+  emailService.sendAccountDeleted(customer).catch(() => {});
+
+  await logAudit(req, 'customer_delete', 'customer', customerId, {
+    fullName: customer.fullName,
+    email: customer.email
+  });
+
+  return res.json({ success: true, message: 'Customer deleted successfully.' });
 }));
 
 // ─── PATCH /api/admin/bookings/:id/auto-assign ─────────────────────────────────
