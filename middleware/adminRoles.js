@@ -5,5 +5,3 @@ export const ADMIN_PANEL_ROLES = {
 };
 
 export const ADMIN_PANEL_ROLE_VALUES = Object.values(ADMIN_PANEL_ROLES);
-
-export const isSuperAdmin = (adminRole) => adminRole === ADMIN_PANEL_ROLES.SUPER_ADMIN;
