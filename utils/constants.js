@@ -31,6 +31,7 @@ export const BOOKING_STATUS = {
   PENDING: 'pending',
   CLAIM_PENDING: 'claim-pending',
   WORKER_ASSIGNED: 'worker-assigned',
+  IN_PROGRESS: 'in-progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
 }

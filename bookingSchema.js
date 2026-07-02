@@ -81,6 +81,7 @@ const bookingSchema = new mongoose.Schema(
         'pending',           // Booking created, waiting for worker or has pending claim
         'claim-pending',     // Worker claimed, admin reviewing (internal state)
         'worker-assigned',   // Admin approved claim, worker assigned
+        'in-progress',       // Worker clicked "Go to Work", actively working
         'completed',         // Both marked done
         'cancelled',         // Customer or admin cancelled
         'rejected',          // Admin rejected claim
