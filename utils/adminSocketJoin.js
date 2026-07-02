@@ -89,7 +89,7 @@ export async function joinAdminSocketSession(socket, tokenArg) {
 
   const adminId = String(decoded.id);
   const becameOnline = addAdminSocket(adminId, socket.id);
-  const panelRole = adminDoc.role || decoded.adminRole || 'admin';
+  const panelRole = adminDoc.role || decoded.role || 'admin';
 
   socket.join('admin-room');
   socket.join(`admin:${adminId}`);

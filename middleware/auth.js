@@ -164,7 +164,7 @@ export const requireAdmin = asyncHandler(async (req, res, next) => {
   next();
 });
 
-/** Only super_admin can manage other admins (JWT adminRole with DB fallback for legacy tokens). */
+/** Only super_admin can manage other admins. */
 export const requireSuperAdmin = asyncHandler(async (req, res, next) => {
   const token = getAccessTokenFromRequest(req);
 

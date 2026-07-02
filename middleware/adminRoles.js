@@ -1,4 +1,4 @@
-/** Admin panel permission levels (stored on Admin document, also in JWT as adminRole). */
+/** Admin panel permission levels (stored on Admin document and JWT). */
 export const ADMIN_PANEL_ROLES = {
   SUPER_ADMIN: 'super_admin',
   ADMIN: 'admin',
