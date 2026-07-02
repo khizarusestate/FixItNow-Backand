@@ -42,7 +42,7 @@ router.post(
       latitude,
       longitude,
       phoneNumber: phoneNumber || req.worker?.phoneNumber || req.customer?.phone || '',
-      email: email || req.worker?.emailAddress || req.customer?.email || '',
+      email: email || req.worker?.email || req.customer?.email || '',
       isGuest: !req.worker && !req.customer,
     });
 
