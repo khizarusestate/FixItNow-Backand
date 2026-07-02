@@ -37,11 +37,8 @@ export function validateEnvSuperAdminCredentials(email, pin) {
 }
 
 export function isEnvSuperAdminToken(decoded) {
-  if (!decoded || decoded.role !== 'admin') return false;
-  return (
-    String(decoded.id) === ENV_SUPER_ADMIN_ID &&
-    decoded.adminRole === ADMIN_PANEL_ROLES.SUPER_ADMIN
-  );
+  if (!decoded || decoded.role !== 'super_admin') return false;
+  return String(decoded.id) === ENV_SUPER_ADMIN_ID;
 }
 
 export function getEnvSuperAdminProfile() {
