@@ -126,7 +126,6 @@ export const requireAdmin = asyncHandler(async (req, res, next) => {
     req.admin = {
       ...decoded,
       id: ENV_SUPER_ADMIN_ID,
-      adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
       email: decoded.email,
     };
     return next();
@@ -160,7 +159,7 @@ export const requireAdmin = asyncHandler(async (req, res, next) => {
   req.admin = {
     ...decoded,
     id: String(decoded.id),
-    adminRole: decoded.adminRole || adminDoc.role,
+    role: decoded.role || adminDoc.role,
     email: decoded.email || adminDoc.email,
   };
   next();
@@ -192,7 +191,6 @@ export const requireSuperAdmin = asyncHandler(async (req, res, next) => {
     req.admin = {
       ...decoded,
       id: ENV_SUPER_ADMIN_ID,
-      adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
       email: decoded.email,
     };
     return next();

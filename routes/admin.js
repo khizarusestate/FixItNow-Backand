@@ -228,9 +228,8 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     const profile = getEnvSuperAdminProfile();
     const tokenPayload = {
       id: ENV_SUPER_ADMIN_ID,
-      role: 'admin',
+      role: 'super_admin',
       email: profile.email,
-      adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
     };
     const token = createToken(tokenPayload);
 
@@ -340,7 +339,6 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
     id: admin._id,
     role: 'admin',
     email: admin.email,
-    adminRole: ADMIN_PANEL_ROLES.ADMIN,
   };
   const token = createToken(tokenPayload);
 
@@ -2407,7 +2405,7 @@ router.patch('/maintenance-mode', requireAdmin, asyncHandler(async (req, res) =>
   const { enabled, message } = req.body;
   
   // Check if super admin (only super admin can enable maintenance)
-  const isSuperAdmin = req.admin?.role === 'super_admin' || req.admin?.adminRole === 'super_admin';
+  const isSuperAdmin = req.admin?.role === 'super_admin';
   if (!isSuperAdmin) {
     return res.status(403).json({
       success: false,
