@@ -107,7 +107,7 @@ function formatWorkerData(worker) {
     signupStep: worker.signupStep,
     emailVerified: Boolean(worker.emailVerified),
     needsProfessionalProfile,
-    emailAddress: worker.emailAddress,
+    email: worker.email,
     phoneNumber: worker.phoneNumber,
     authProvider: worker.authProvider || "local",
     googleId: worker.googleId || null,
@@ -210,13 +210,13 @@ const findUserByEmail = async (email) => {
   const normalized = email.toLowerCase().trim();
   let user = await Customer.findOne({ email: normalized, isDeleted: false });
   if (user) return { user, role: "customer" };
-  user = await Worker.findOne({ emailAddress: normalized, isDeleted: false });
+  user = await Worker.findOne({ email: normalized, isDeleted: false });
   if (user) return { user, role: "worker" };
   return null;
 };
 
 const getEmailForUser = (user, role) => {
-  return role === "worker" ? user.emailAddress : user.email;
+  return user.email;
 };
 
 // ─── POST /api/auth/customer/register ─────────────────────────────────────────
@@ -254,7 +254,7 @@ router.post(
     
     // NEW: Check if email already used by a worker
     const existingWorker = await Worker.findOne({
-      emailAddress: email.toLowerCase().trim(),
+      email: email.toLowerCase().trim(),
       isDeleted: false,
     });
     
@@ -357,7 +357,7 @@ router.post(
     const normalizedEmail = email.toLowerCase().trim();
     if (String(role || "").toLowerCase() === "worker") {
       const worker = await Worker.findOne({
-        emailAddress: normalizedEmail,
+        email: normalizedEmail,
         isDeleted: false,
       });
       if (!worker) {
@@ -512,7 +512,7 @@ router.post(
 
     if (String(role || "").toLowerCase() === "worker") {
       const worker = await Worker.findOne({
-        emailAddress: normalizedEmail,
+        email: normalizedEmail,
         isDeleted: false,
       });
       if (!worker) {
@@ -532,7 +532,7 @@ router.post(
       worker.emailVerificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
       await worker.save();
       const emailResult = await emailService.sendEmailVerificationCode(
-        { email: worker.emailAddress, fullName: worker.fullName },
+        { email: worker.email, fullName: worker.fullName },
         verificationCode,
       );
       if (!emailResult.success && !emailResult.skipped) {
@@ -971,7 +971,7 @@ router.post(
           record.userRole === "customer"
             ? user.email
             : record.userRole === "worker"
-              ? user.emailAddress
+              ? user.email
               : user.email,
       };
 
@@ -1193,7 +1193,7 @@ router.post(
 
     const email = emailAddress.toLowerCase().trim();
     const existingWorker = await Worker.findOne({
-      emailAddress: email,
+      email: email,
       isDeleted: false,
     });
     if (existingWorker) {
@@ -1220,7 +1220,7 @@ router.post(
       firstName: first,
       lastName: last,
       fullName,
-      emailAddress: email,
+      email: email,
       password,
       phoneNumber: phone,
       cnicNumber: "",
@@ -1247,7 +1247,7 @@ router.post(
       success: true,
       message: "Check your email for a verification code, then complete your professional details.",
       data: {
-        emailAddress: worker.emailAddress,
+        email: worker.email,
         signupStep: worker.signupStep,
       },
     });
@@ -1277,7 +1277,7 @@ router.post(
     }
 
     const worker = await Worker.findOne({
-      emailAddress: emailAddress.toLowerCase().trim(),
+      email: emailAddress.toLowerCase().trim(),
       isDeleted: false,
     });
     if (!worker) {
@@ -1435,7 +1435,7 @@ router.post(
     }
 
     const worker = await Worker.findOne({
-      emailAddress: emailAddress.toLowerCase().trim(),
+      email: emailAddress.toLowerCase().trim(),
       isDeleted: false,
     });
     if (!worker) {
@@ -1472,7 +1472,7 @@ router.post(
       const tokenPayload = {
         id: worker._id,
         role: "worker",
-        email: worker.emailAddress,
+        email: worker.email,
       };
       const token = createToken(tokenPayload);
       let refreshToken;
@@ -1522,7 +1522,7 @@ router.post(
     const tokenPayload = {
       id: worker._id,
       role: "worker",
-      email: worker.emailAddress,
+      email: worker.email,
     };
     const token = createToken(tokenPayload);
 
@@ -1585,7 +1585,7 @@ router.put(
     if (emailAddress !== undefined) {
       const email = emailAddress.toLowerCase().trim();
       const existingWorker = await Worker.findOne({
-        emailAddress: email,
+        email: email,
         _id: { $ne: req.worker.id },
       });
       if (existingWorker) {
@@ -1821,7 +1821,7 @@ router.post(
       "Customer";
 
     const existingWorker = await Worker.findOne({
-      emailAddress: email,
+      email: email,
       isDeleted: false,
     });
     if (existingWorker) {
@@ -1972,11 +1972,11 @@ router.post(
     }
 
     let worker = await Worker.findOne({
-      $or: [{ googleId }, { emailAddress: email }],
+      $or: [{ googleId }, { email: email }],
       isDeleted: false,
     });
 
-    if (worker && worker.emailAddress !== email && worker.googleId !== googleId) {
+    if (worker && worker.email !== email && worker.googleId !== googleId) {
       return res.status(409).json({
         success: false,
         message: "This Google account cannot be linked. Contact support.",
@@ -1988,7 +1988,7 @@ router.post(
         firstName,
         lastName,
         fullName,
-        emailAddress: email,
+        email: email,
         googleId,
         authProvider: "google",
         phoneNumber: "",
@@ -2036,7 +2036,7 @@ router.post(
     const tokenPayload = {
       id: worker._id,
       role: "worker",
-      email: worker.emailAddress,
+      email: worker.email,
     };
     const token = createToken(tokenPayload);
 

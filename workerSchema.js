@@ -23,7 +23,7 @@ const workerSchema = new mongoose.Schema({
     default: "",
     trim: true,
   },
-  emailAddress: {
+  email: {
     type: String,
     required: true,
     unique: true,
