@@ -1,6 +1,6 @@
 import express from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { requireCustomer, requireAdmin } from '../middleware/auth.js';
+import { requireCustomer, requireAdmin, optionalAuth } from '../middleware/auth.js';
 import Review from '../reviewSchema.js';
 import Booking from '../bookingSchema.js';
 import Worker from '../workerSchema.js';
@@ -122,23 +122,36 @@ router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
 }));
 
 // ─── DELETE /api/reviews/:id ────────────────────────────────────────────────────
-// Delete a review (admin only)
-router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {
+// Delete a review (customer can delete own, admin can delete any)
+router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid review ID.' });
   }
 
-  const review = await Review.findByIdAndDelete(req.params.id);
+  const review = await Review.findById(req.params.id);
   if (!review) {
     return res.status(404).json({ success: false, message: 'Review not found.' });
   }
 
+  // Check authorization: customer can delete own review
+  if (String(review.customerId) !== String(req.customer.id)) {
+    return res.status(403).json({
+      success: false,
+      message: 'You can only delete your own reviews.'
+    });
+  }
+
+  const deleted = await Review.findByIdAndDelete(req.params.id);
+  if (!deleted) {
+    return res.status(404).json({ success: false, message: 'Review not found.' });
+  }
+
   // Recalculate worker rating
-  const workerReviews = await Review.find({ workerId: review.workerId });
+  const workerReviews = await Review.find({ workerId: deleted.workerId });
   const totalRating = workerReviews.reduce((sum, r) => sum + r.rating, 0);
   const avgRating = workerReviews.length > 0 ? totalRating / workerReviews.length : 0;
 
-  await Worker.findByIdAndUpdate(review.workerId, {
+  await Worker.findByIdAndUpdate(deleted.workerId, {
     rating: Math.round(avgRating * 100) / 100,
     totalReviews: workerReviews.length
   });
