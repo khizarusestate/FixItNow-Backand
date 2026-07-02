@@ -39,9 +39,6 @@ export const createAccessToken = (payload) => {
     email: payload.email || null,
     iat: Math.floor(Date.now() / 1000),
   };
-  if (payload.adminRole) {
-    tokenPayload.adminRole = payload.adminRole;
-  }
 
   return jwt.sign(tokenPayload, JWT_SECRET, {
     expiresIn: `${env.ACCESS_TOKEN_EXPIRY_MINUTES}m`,
@@ -69,9 +66,6 @@ export const createToken = (payload) => {
     email: payload.email || null,
     iat: Math.floor(Date.now() / 1000),
   };
-  if (payload.adminRole) {
-    tokenPayload.adminRole = payload.adminRole;
-  }
 
   return jwt.sign(tokenPayload, JWT_SECRET, {
     expiresIn: `${JWT_CONFIG.LEGACY_TOKEN_DAYS}d`,

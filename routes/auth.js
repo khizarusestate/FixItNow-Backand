@@ -879,9 +879,8 @@ router.post(
           const profile = getEnvSuperAdminProfile();
           const payload = {
             id: ENV_SUPER_ADMIN_ID,
-            role: "admin",
+            role: "super_admin",
             email: profile.email,
-            adminRole: ADMIN_PANEL_ROLES.SUPER_ADMIN,
           };
           const newAccessToken = createAccessToken(payload);
           const newRefreshToken = await createRefreshToken(
@@ -921,7 +920,6 @@ router.post(
           id: user._id,
           role: "admin",
           email: user.email,
-          adminRole: user.role || "admin",
         };
         const newAccessToken = createAccessToken(payload);
         const newRefreshToken = await createRefreshToken(

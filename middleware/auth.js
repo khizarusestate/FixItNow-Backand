@@ -2,7 +2,6 @@ import { verifyToken, validateTokenStructure } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import logger from '../utils/logger.js';
 import { asyncHandler } from './errorHandler.js';
-import { requirePermission, requireOwnership } from '../utils/permissions.js';
 import Admin from '../models/Admin.js';
 import Customer from '../customerSchema.js';
 import Worker from '../workerSchema.js';
@@ -248,6 +247,3 @@ export const optionalAuth = asyncHandler(async (req, res, next) => {
     next();
   }
 });
-
-// Export RBAC middleware for use in routes
-export { requirePermission, requireOwnership };

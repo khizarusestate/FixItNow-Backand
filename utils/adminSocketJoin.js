@@ -60,7 +60,7 @@ export async function joinAdminSocketSession(socket, tokenArg) {
       const payload = {
         adminId,
         status: 'online',
-        adminRole: 'super_admin',
+        role: 'super_admin',
         timestamp: new Date().toISOString(),
       };
       emitToAdmin('admin-status-updated', payload);
@@ -105,7 +105,7 @@ export async function joinAdminSocketSession(socket, tokenArg) {
     const payload = {
       adminId,
       status: 'online',
-      adminRole: panelRole,
+      role: panelRole,
       timestamp: new Date().toISOString(),
     };
     emitToAdmin('admin-status-updated', payload);
@@ -128,7 +128,7 @@ export function emitAdminPresenceOffline(socket) {
   const payload = {
     adminId: socket.adminId,
     status: 'offline',
-    adminRole: socket.adminPanelRole || 'admin',
+    role: socket.adminPanelRole || 'admin',
     timestamp: new Date().toISOString(),
   };
 
