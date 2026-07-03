@@ -1148,50 +1148,70 @@ router.post(
   }),
 );
 
-// ─── POST /api/auth/worker/register (step 1 — basic info) ─────────────────────
+// ─── POST /api/auth/worker/register (single form — all fields) ─────────────────
 router.post(
   "/worker/register",
+  verificationPhotoUpload.single("verificationPhoto"),
   asyncHandler(async (req, res) => {
     const {
-      firstName,
-      lastName,
-      emailAddress,
+      fullName,
+      email: emailAddress,
       password,
       phoneNumber,
-      fullName: legacyFullName,
+      cnicNumber,
+      primaryServiceId,
+      primaryServiceName,
+      primaryServiceCategory,
     } = req.body;
-    const first = String(firstName || "").trim();
-    const last = String(lastName || "").trim();
-    const fullName =
-      [first, last].filter(Boolean).join(" ") ||
-      String(legacyFullName || "").trim();
 
-    const phone = String(phoneNumber || "").trim();
+    // Validate required fields
+    const fullNameStr = String(fullName || "").trim();
+    const emailStr = String(emailAddress || "").trim().toLowerCase();
+    const passwordStr = String(password || "").trim();
+    const phoneStr = String(phoneNumber || "").trim();
+    const cnicStr = String(cnicNumber || "").trim();
 
-    if (!fullName || !emailAddress || !password || !phone) {
+    if (!fullNameStr || !emailStr || !passwordStr || !phoneStr || !cnicStr) {
       return res.status(400).json({
         success: false,
-        message: "Full name, email, phone number, and password are required.",
+        message: "Full name, email, password, phone number, and CNIC are required.",
       });
     }
 
-    if (password.length < 6) {
+    if (passwordStr.length < 6) {
       return res.status(400).json({
         success: false,
         message: "Password must be at least 6 characters.",
       });
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
       return res.status(400).json({
         success: false,
         message: "Please enter a valid email address.",
       });
     }
 
-    const email = emailAddress.toLowerCase().trim();
+    // Verify photo required
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Passport-size verification photo is required.",
+      });
+    }
+
+    // CNIC validation
+    const cnicClean = String(cnicStr).replace(/-/g, "");
+    if (!/^\d{13}$/.test(cnicClean)) {
+      return res.status(400).json({
+        success: false,
+        message: "CNIC must be 13 digits.",
+      });
+    }
+
+    // Check email uniqueness
     const existingWorker = await Worker.findOne({
-      email: email,
+      email: emailStr,
       isDeleted: false,
     });
     if (existingWorker) {
@@ -1202,154 +1222,20 @@ router.post(
     }
 
     const existingCustomer = await Customer.findOne({
-      email,
+      email: emailStr,
       isDeleted: false,
     });
     if (existingCustomer) {
       return res.status(409).json({
         success: false,
-        message:
-          "This email is registered as a customer. Use a different email for worker signup.",
+        message: "This email is registered as a customer. Use a different email for worker signup.",
       });
     }
 
-    const verificationCode = generateVerificationCode();
-    const worker = await Worker.create({
-      firstName: first,
-      lastName: last,
-      fullName,
-      email: email,
-      password,
-      phoneNumber: phone,
-      cnicNumber: "",
-      primaryServiceCategory: "",
-      signupStep: "awaiting_email",
-      emailVerified: false,
-      emailVerificationCode: verificationCode,
-      emailVerificationExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
-      status: "not_approved",
-    });
-
-    const emailResult = await emailService.sendEmailVerificationCode(
-      { email, fullName },
-      verificationCode,
-    );
-    if (!emailResult.success && !emailResult.skipped) {
-      return res.status(503).json({
-        success: false,
-        message: "Could not send verification email. Try again shortly.",
-      });
-    }
-
-    return res.status(201).json({
-      success: true,
-      message: "Check your email for a verification code, then complete your professional details.",
-      data: {
-        email: worker.email,
-        signupStep: worker.signupStep,
-      },
-    });
-  }),
-);
-
-// ─── POST /api/auth/worker/register/professional (step 2) ─────────────────────
-router.post(
-  "/worker/register/professional",
-  verificationPhotoUpload.single("verificationPhoto"),
-  asyncHandler(async (req, res) => {
-    const {
-      emailAddress,
-      password,
-      phoneNumber,
-      cnicNumber,
-      primaryServiceId,
-      primaryServiceName,
-      primaryServiceCategory,
-    } = req.body;
-
-    if (!emailAddress) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required.",
-      });
-    }
-
-    const worker = await Worker.findOne({
-      email: emailAddress.toLowerCase().trim(),
-      isDeleted: false,
-    });
-    if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Worker account not found.",
-      });
-    }
-
-    if (worker.authProvider === "local") {
-      if (!worker.emailVerified) {
-        return res.status(403).json({
-          success: false,
-          message: "Verify your email before completing professional details.",
-          code: "EMAIL_NOT_VERIFIED",
-        });
-      }
-      if (password && !(await worker.comparePassword(password))) {
-        return res.status(401).json({
-          success: false,
-          message: "Incorrect password.",
-        });
-      }
-    }
-
-    if (!cnicNumber) {
-      return res.status(400).json({
-        success: false,
-        message: "CNIC is required.",
-      });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "Passport-size verification photo is required.",
-      });
-    }
-
-    // Phone: email signup collects it in step 1; OAuth workers provide it here.
-    const finalPhoneNumber = (
-      worker.phoneNumber?.trim() || String(phoneNumber || "").trim()
-    );
-    if (!finalPhoneNumber) {
-      const needsPhoneFromForm =
-        worker.authProvider === "google" || Boolean(worker.googleId);
-      return res.status(400).json({
-        success: false,
-        message: needsPhoneFromForm
-          ? "Phone number is required. Please provide your phone number."
-          : "Phone number is missing on your account. Contact support.",
-      });
-    }
-
-    const cnicClean = String(cnicNumber).replace(/-/g, "");
-    if (!/^\d{13}$/.test(cnicClean)) {
-      return res.status(400).json({
-        success: false,
-        message: "CNIC must be 13 digits.",
-      });
-    }
-
-    const services = await resolveWorkerServicesArray(req.body);
-    if (services.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "At least one service is required.",
-      });
-    }
-
-    const cnicStored = normalizeCnic(cnicNumber);
+    // Check CNIC uniqueness
+    const cnicStored = normalizeCnic(cnicStr);
     const duplicateCnic = await Worker.findOne({
       cnicNumber: cnicStored,
-      _id: { $ne: worker._id },
       isDeleted: false,
     });
     if (duplicateCnic) {
@@ -1359,46 +1245,82 @@ router.post(
       });
     }
 
-    worker.cnicNumber = cnicStored;
-    applyWorkerServices(worker, services);
-    worker.signupStep = "complete";
-    
-    if (phoneNumber && String(phoneNumber).trim()) {
-      worker.phoneNumber = String(phoneNumber).trim();
-    } else if (!worker.phoneNumber?.trim() && finalPhoneNumber) {
-      worker.phoneNumber = finalPhoneNumber;
+    // Resolve services/trades
+    const services = await resolveWorkerServicesArray(req.body);
+    if (services.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one service/trade is required.",
+      });
     }
 
-    // Handle location update
-    applyLocationUpdate(worker, req.body);
+    // Create worker with single signup - all data collected
+    const worker = await Worker.create({
+      fullName: fullNameStr,
+      email: emailStr,
+      password: passwordStr,
+      phoneNumber: phoneStr,
+      cnicNumber: cnicStored,
+      emailVerified: true,  // Email verified by signup form
+      primaryServiceCategory,
+      primaryServiceId,
+      primaryServiceName,
+      verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,
+      
+      // NEW: Approval workflow
+      status: "inactive",              // Cannot login
+      approvalStatus: "pending_approval", // Waiting for admin review
+      signupStep: "complete",          // Single step signup complete
+      
+      authProvider: "local",
+      availability: false,             // Worker not available until approved
+    });
+
+    // Apply resolved services
+    applyWorkerServices(worker, services);
     
-    // Handle verification photo upload
-    if (req.file) {
-      worker.verificationPhoto = `/uploads/worker-verification/${req.file.filename}`;
-    }
+    // Handle location if provided
+    applyLocationUpdate(worker, req.body);
     
     await worker.save();
 
+    // Notify all admins of pending worker approval
     emitNotification(
       "workers",
-      "created",
-      `Worker profile complete: ${worker.fullName} (${worker.primaryServiceCategory})`,
+      "pending_approval",
+      `New worker pending approval: ${worker.fullName}`,
     );
+    
     notifyAllAdmins({
-      title: "New worker application",
-      message: `${worker.fullName} submitted professional details for review.`,
+      title: "New worker application pending approval",
+      message: `${worker.fullName} registered and is waiting for account approval.`,
       type: "info",
       relatedEntityId: worker._id,
     }).catch(() => {});
 
-    // Send notification via notification service
     notifyAdminNewWorker(worker).catch(() => {});
 
-    return res.json({
+    return res.status(201).json({
       success: true,
-      message:
-        "Professional details saved. Admin will review and approve your account.",
-      data: formatWorkerData(worker),
+      message: "Application submitted successfully! Please wait for admin approval. You'll receive an email once your account is approved.",
+      data: {
+        email: worker.email,
+        fullName: worker.fullName,
+        approvalStatus: worker.approvalStatus,
+        message: "Your account is pending admin approval",
+      },
+    });
+  }),
+);
+
+// ─── POST /api/auth/worker/register/professional (DEPRECATED - use single /register form) ───
+router.post(
+  "/worker/register/professional",
+  asyncHandler(async (req, res) => {
+    return res.status(410).json({
+      success: false,
+      message: "This endpoint has been deprecated. Please use POST /api/auth/worker/register with all fields including verification photo.",
+      code: "ENDPOINT_DEPRECATED",
     });
   }),
 );
@@ -1466,54 +1388,37 @@ router.post(
       });
     }
 
-    if (worker.signupStep !== "complete") {
-      const tokenPayload = {
-        id: worker._id,
-        role: "worker",
-        email: worker.email,
-      };
-      const token = createToken(tokenPayload);
-      let refreshToken;
-      if (env.USE_REFRESH_TOKENS) {
-        refreshToken = await createRefreshToken(
-          worker._id,
-          "worker",
-          req,
-          refreshTokenExpiryDays(rememberMe),
-        );
-      }
-      return res.json(
-        attachAuthToResponse(res, {
-          accessToken: token,
-          refreshToken,
-          body: {
-            success: true,
-            message: "Complete your professional details to finish signup.",
-            worker: formatWorkerData(worker),
-            needsProfessionalProfile: true,
-          },
-        }),
-      );
+    // NEW: Check admin approval status
+    if (worker.approvalStatus === "pending_approval") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is pending admin approval. Please wait for verification and check your email.",
+        code: "PENDING_APPROVAL",
+      });
     }
 
-    if (worker.status === "not_approved") {
+    if (worker.approvalStatus === "rejected") {
       return res.status(403).json({
         success: false,
-        message:
-          "Your account is pending admin approval. Please wait for verification.",
+        message: `Your account has been rejected${worker.rejectionReason ? ': ' + worker.rejectionReason : ''}. Please contact support.`,
+        code: "ACCOUNT_REJECTED",
       });
     }
-    if (worker.status === "rejected") {
+
+    // Check if admin-approved status
+    if (worker.status !== "active" || worker.approvalStatus !== "approved") {
       return res.status(403).json({
         success: false,
-        message: "Your account has been rejected. Please contact support.",
+        message: "Your account cannot login at this time. Please contact support.",
+        code: "ACCOUNT_NOT_ACTIVE",
       });
     }
+
     if (worker.isDisabled) {
       return res.status(403).json({
         success: false,
-        message:
-          "Your account has been disabled by an administrator. Please contact support.",
+        message: "Your account has been disabled by an administrator. Please contact support.",
+        code: "ACCOUNT_DISABLED",
       });
     }
 
@@ -1525,9 +1430,6 @@ router.post(
     const token = createToken(tokenPayload);
 
     worker.lastActive = new Date();
-    if (!["not_approved", "rejected"].includes(worker.status)) {
-      worker.status = "active";
-    }
     await worker.save();
     emitRefresh("workers");
 
