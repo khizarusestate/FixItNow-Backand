@@ -162,11 +162,6 @@ const workerSchema = new mongoose.Schema({
     default: false,
   },
   /** basic_complete = step1 done; complete = step2 professional details submitted */
-  signupStep: {
-    type: String,
-    enum: ["awaiting_email", "basic_complete", "complete"],
-    default: "awaiting_email",
-  },
   rating: {
     type: Number,
     default: 0,
@@ -195,14 +190,44 @@ const workerSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    default: "not_approved",
+    default: "inactive",
     enum: [
-      "not_approved",
-      "approved",
-      "rejected",
-      "active",
-      "inactive",
+      "inactive",      // Cannot login until approved
+      "active",        // Approved by admin, can login
+      "suspended",     // Suspended by admin
+      "rejected",      // Rejected by admin
     ],
+  },
+  approvalStatus: {
+    type: String,
+    default: "pending_approval",
+    enum: [
+      "pending_approval",   // Waiting for admin review
+      "approved",           // Admin approved - can login
+      "rejected",           // Admin rejected
+    ],
+  },
+  approvedAt: {
+    type: Date,
+    default: null,
+    description: 'When admin approved the worker account'
+  },
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Admin',
+    default: null,
+    description: 'Which admin approved this worker'
+  },
+  rejectionReason: {
+    type: String,
+    default: '',
+    description: 'Reason if worker account was rejected'
+  },
+  signupStep: {
+    type: String,
+    enum: ["complete"],
+    default: "complete",
+    description: 'Single-step signup - always complete after initial registration'
   },
   availability: {
     type: Boolean,
@@ -290,10 +315,13 @@ workerSchema.index({ primaryServiceId: 1 });
 workerSchema.index({ primaryServiceCategory: 1, primaryServiceName: 1 });
 workerSchema.index({ serviceCategories: 1 });
 workerSchema.index({ status: 1 });
-workerSchema.index({ emailAddress: 1 }, { unique: true });
+workerSchema.index({ approvalStatus: 1 });
+workerSchema.index({ email: 1 }, { unique: true });
 workerSchema.index({ cnicNumber: 1 }, { unique: true });
 workerSchema.index({ status: 1, createdAt: -1 });
+workerSchema.index({ approvalStatus: 1, createdAt: -1 });
 workerSchema.index({ isDeleted: 1, status: 1 });
+workerSchema.index({ isDeleted: 1, approvalStatus: 1 });
 workerSchema.index({ location: 1 });
 workerSchema.index({ serviceArea: 1 });
 workerSchema.index({ availability: 1, status: 1 });
