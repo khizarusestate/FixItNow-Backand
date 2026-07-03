@@ -1586,18 +1586,26 @@ router.put('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
 }));
 
 // ─── DELETE /api/admin/workers/:id ─────────────────────────────────────────────
+// PERMANENT DELETE: Removes worker account completely from database
 router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   const workerId = req.params.id;
   if (!mongoose.Types.ObjectId.isValid(workerId)) {
     return res.status(400).json({ success: false, message: 'Invalid worker ID.' });
   }
 
-  const existing = await Worker.findOne({ _id: workerId, isDeleted: false });
+  const existing = await Worker.findById(workerId);
   if (!existing) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
-  // ALWAYS revoke tokens - admin can delete anytime
+  // Store info before deletion for audit log
+  const workerInfo = {
+    fullName: existing.fullName,
+    email: existing.email,
+    workerId: existing._id
+  };
+
+  // Step 1: Revoke all tokens
   try {
     const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
     await revokeAllUserRefreshTokens(workerId, "worker");
@@ -1605,61 +1613,72 @@ router.delete('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
     logger.warn('Failed to revoke tokens before deletion', { error: err.message });
   }
 
-  const deletedAt = new Date();
-  
-  // Delete all related bookings
-  await Booking.updateMany(
-    { workerId, isDeleted: { $ne: true } },
-    { $set: { isDeleted: true, deletedAt } },
-  );
-  
-  // Delete the worker account
-  const worker = await Worker.findByIdAndUpdate(
-    workerId,
-    { 
-      isDeleted: true, 
-      deletedAt, 
-      status: WORKER_STATUS.INACTIVE,
-      isDisabled: true 
-    },
-    { new: true },
-  );
-  
-  if (!worker) {
-    return res.status(404).json({ success: false, message: 'Worker not found.' });
+  // Step 2: Delete all related bookings (hard delete)
+  await Booking.deleteMany({ workerId });
+
+  // Step 3: Delete all related reviews where worker is reviewed
+  await Review.deleteMany({ workerId });
+
+  // Step 4: HARD DELETE - Remove worker account completely from database
+  const deletedWorker = await Worker.findByIdAndDelete(workerId);
+
+  if (!deletedWorker) {
+    return res.status(404).json({ success: false, message: 'Failed to delete worker.' });
   }
 
-  // CRITICAL: Notify worker of account deletion with proper event
+  // Notify worker before they lose access
   emitToUser(String(workerId), 'account-deleted', {
-    message: 'Your account has been deleted by administrator',
+    message: 'Your account has been permanently deleted by administrator',
     type: 'account-deleted',
     timestamp: new Date().toISOString()
   });
 
+  // Refresh admin view
   emitRefresh('workers');
-  emailService.sendAccountDeleted(worker).catch(() => {});
 
-  await logAudit(req, 'worker_delete', 'worker', workerId, {
-    fullName: worker.fullName,
-    email: worker.emailAddress
+  // Send deletion email
+  if (workerInfo.email) {
+    emailService.sendAccountDeleted({ 
+      email: workerInfo.email, 
+      fullName: workerInfo.fullName,
+      deletedBy: 'admin'
+    }).catch(() => {});
+  }
+
+  // Audit log
+  await logAudit(req, 'worker_permanent_delete', 'worker', workerId, {
+    fullName: workerInfo.fullName,
+    email: workerInfo.email,
+    permanentDelete: true
   });
 
-  return res.json({ success: true, message: 'Worker deleted successfully.' });
+  return res.json({ 
+    success: true, 
+    message: 'Worker account permanently deleted from database.' 
+  });
 }));
 
-// ─── DELETE /api/admin/customers/:id ───────────────────────────────────────────
+// ─── DELETE /api/admin/customers/:id ──────────────────────────────────────────
+// PERMANENT DELETE: Removes customer account completely from database
 router.delete('/customers/:id', requireAdmin, asyncHandler(async (req, res) => {
   const customerId = req.params.id;
   if (!mongoose.Types.ObjectId.isValid(customerId)) {
     return res.status(400).json({ success: false, message: 'Invalid customer ID.' });
   }
 
-  const existing = await Customer.findOne({ _id: customerId, isDeleted: false });
+  const existing = await Customer.findById(customerId);
   if (!existing) {
     return res.status(404).json({ success: false, message: 'Customer not found.' });
   }
 
-  // ALWAYS revoke tokens - admin can delete anytime
+  // Store info before deletion for audit log
+  const customerInfo = {
+    fullName: existing.fullName,
+    email: existing.email,
+    customerId: existing._id
+  };
+
+  // Step 1: Revoke all tokens
   try {
     const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
     await revokeAllUserRefreshTokens(customerId, "customer");
@@ -1667,45 +1686,49 @@ router.delete('/customers/:id', requireAdmin, asyncHandler(async (req, res) => {
     logger.warn('Failed to revoke tokens before deletion', { error: err.message });
   }
 
-  const deletedAt = new Date();
-  
-  // Delete all related bookings
-  await Booking.updateMany(
-    { customerId, isDeleted: { $ne: true } },
-    { $set: { isDeleted: true, deletedAt } },
-  );
-  
-  // Delete the customer account
-  const customer = await Customer.findByIdAndUpdate(
-    customerId,
-    { 
-      isDeleted: true, 
-      deletedAt,
-      isDisabled: true 
-    },
-    { new: true },
-  );
-  
-  if (!customer) {
-    return res.status(404).json({ success: false, message: 'Customer not found.' });
+  // Step 2: Delete all related bookings (hard delete)
+  await Booking.deleteMany({ customerId });
+
+  // Step 3: Delete all related reviews submitted by customer
+  await Review.deleteMany({ customerId });
+
+  // Step 4: HARD DELETE - Remove customer account completely from database
+  const deletedCustomer = await Customer.findByIdAndDelete(customerId);
+
+  if (!deletedCustomer) {
+    return res.status(404).json({ success: false, message: 'Failed to delete customer.' });
   }
 
-  // CRITICAL: Notify customer of account deletion
+  // Notify customer before they lose access
   emitToUser(String(customerId), 'account-deleted', {
-    message: 'Your account has been deleted by administrator',
+    message: 'Your account has been permanently deleted by administrator',
     type: 'account-deleted',
     timestamp: new Date().toISOString()
   });
 
+  // Refresh admin view
   emitRefresh('customers');
-  emailService.sendAccountDeleted(customer).catch(() => {});
 
-  await logAudit(req, 'customer_delete', 'customer', customerId, {
-    fullName: customer.fullName,
-    email: customer.email
+  // Send deletion email
+  if (customerInfo.email) {
+    emailService.sendAccountDeleted({ 
+      email: customerInfo.email, 
+      fullName: customerInfo.fullName,
+      deletedBy: 'admin'
+    }).catch(() => {});
+  }
+
+  // Audit log
+  await logAudit(req, 'customer_permanent_delete', 'customer', customerId, {
+    fullName: customerInfo.fullName,
+    email: customerInfo.email,
+    permanentDelete: true
   });
 
-  return res.json({ success: true, message: 'Customer deleted successfully.' });
+  return res.json({ 
+    success: true, 
+    message: 'Customer account permanently deleted from database.' 
+  });
 }));
 
 // ─── PATCH /api/admin/bookings/:id/auto-assign ─────────────────────────────────

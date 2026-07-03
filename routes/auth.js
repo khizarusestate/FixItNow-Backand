@@ -1673,35 +1673,39 @@ router.delete(
       });
     }
 
-    const deletedAt = new Date();
+    // Delete all related data
     await Promise.all([
-      Booking.updateMany(
-        { customerId, isDeleted: { $ne: true } },
-        { $set: { isDeleted: true, deletedAt } },
-      ),
-      Review.deleteMany({ customerId }),
+      Booking.deleteMany({ customerId }),           // Hard delete bookings
+      Review.deleteMany({ customerId }),            // Hard delete reviews
       Notification.deleteMany({ userId: customerId }),
-      Advertisement.deleteMany({ customerId }),
+      Advertisement.deleteMany({ customerId }),    // Hard delete ads
       PushSubscription.deleteMany({ userId: customerId, userRole: "customer" }),
     ]);
-    await Customer.findByIdAndUpdate(customerId, {
-      isDeleted: true,
-      deletedAt,
-      isActive: false,
-      status: CUSTOMER_STATUS.INACTIVE,
-    });
+    
+    // HARD DELETE - Remove customer account completely from database
+    await Customer.findByIdAndDelete(customerId);
 
     // Notify admin
     emitNotification(
       "customers",
       "deleted",
-      `Customer account deleted: ${customer.fullName}`,
+      `Customer account permanently deleted: ${customer.fullName}`,
     );
     emitRefresh("customers");
 
+    // Audit log
+    await logAudit({ 
+      admin: { id: customerId },
+      user: { id: customerId }
+    }, 'customer_self_delete', 'customer', customerId, {
+      fullName: customer.fullName,
+      email: customer.email,
+      permanentDelete: true
+    });
+
     return res.json({
       success: true,
-      message: "Account and all related data deleted successfully.",
+      message: "Account and all related data permanently deleted from database.",
     });
   }),
 );
@@ -1720,20 +1724,6 @@ router.delete(
         .status(404)
         .json({ success: false, message: "Worker not found." });
     }
-    if (worker.isDeleted) {
-      return res.status(400).json({
-        success: false,
-        message: "Account is already deleted.",
-        code: "ACCOUNT_ALREADY_DELETED",
-      });
-    }
-    if (worker.isDisabled) {
-      return res.status(400).json({
-        success: false,
-        message: "Account is disabled. Please contact support.",
-        code: "ACCOUNT_DISABLED",
-      });
-    }
 
     // Revoke all refresh tokens for this worker
     try {
@@ -1745,35 +1735,42 @@ router.delete(
       });
     }
 
-    const deletedAt = new Date();
+    // Delete all related data
     await Promise.all([
-      Booking.updateMany(
-        { workerId, isDeleted: { $ne: true } },
-        { $set: { isDeleted: true, deletedAt } },
-      ),
-      Review.deleteMany({ workerId }),
+      Booking.deleteMany({ workerId }),            // Hard delete bookings
+      Review.deleteMany({ workerId }),             // Hard delete reviews
       Notification.deleteMany({ userId: workerId }),
-      Advertisement.deleteMany({ workerId }),
+      Advertisement.deleteMany({ workerId }),      // Hard delete ads
       PushSubscription.deleteMany({ userId: workerId, userRole: "worker" }),
     ]);
-    await Worker.findByIdAndUpdate(workerId, {
-      isDeleted: true,
-      deletedAt,
-      status: WORKER_STATUS.INACTIVE,
-      isDisabled: true,
-    });
+    
+    // HARD DELETE - Remove worker account completely from database
+    await Worker.findByIdAndDelete(workerId);
 
     // Notify admin
     emitNotification(
       "workers",
       "deleted",
-      `Worker account deleted: ${worker.fullName}`,
+      `Worker account permanently deleted: ${worker.fullName}`,
     );
     emitRefresh("workers");
 
+    // Audit log
+    await logAudit({ 
+      admin: { id: workerId },
+      user: { id: workerId }
+    }, 'worker_self_delete', 'worker', workerId, {
+      fullName: worker.fullName,
+      email: worker.email,
+      permanentDelete: true
+    });
+
     return res.json({
       success: true,
-      message: "Account and all related data deleted successfully.",
+      message: "Account and all related data permanently deleted from database.",
+    });
+  }),
+);
     });
   }),
 );
