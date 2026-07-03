@@ -369,6 +369,95 @@ router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
   });
 }));
 
+// ─── GET /api/bookings/my/claimed ──────────────────────────────────────────────
+// Get current worker's claimed and assigned bookings
+// Shows: Full info for worker-assigned, in-progress, completed
+// Hides: Sensitive info for claim-pending status
+router.get('/my/claimed', requireWorker, asyncHandler(async (req, res) => {
+  const { status } = req.query;
+
+  // Build query for worker's bookings
+  const query = {
+    $or: [
+      { workerId: req.worker.id },      // Worker assigned
+      { claimWorkerId: req.worker.id }  // Worker claimed but not yet approved
+    ],
+    isDeleted: false
+  };
+
+  // Optional status filter
+  if (status && ['pending', 'claim-pending', 'worker-assigned', 'in-progress', 'completed'].includes(status)) {
+    query.status = status;
+  }
+
+  const bookings = await Booking.find(query)
+    .populate('customerId', 'fullName phone email')
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Import visibility helper
+  const { getVisibleBookingInfo } = await import('../utils/bookingVisibility.js');
+
+  return res.json({
+    success: true,
+    data: bookings.map(b => {
+      // Get filtered info based on status
+      const visibleInfo = getVisibleBookingInfo(b, b.status);
+
+      return {
+        id: b._id,
+        serviceTitle: b.serviceTitle,
+        serviceCategory: b.serviceCategory,
+        status: b.status,
+        date: b.date,
+        time: b.time,
+        budget: b.budget,
+        createdAt: b.createdAt,
+        
+        // Visibility: shows based on status
+        phone: visibleInfo.phone,
+        email: visibleInfo.email,
+        address: visibleInfo.address,
+        city: visibleInfo.city,
+        area: visibleInfo.area,
+        latitude: visibleInfo.latitude,
+        longitude: visibleInfo.longitude,
+        
+        // Always show description to help worker
+        description: b.description,
+        
+        // Customer info
+        customerName: b.customerName,
+        customerId: b.customerId._id,
+        
+        // Timing
+        claimedAt: b.claimedAt,
+        approvedAt: b.approvedAt,
+        startedAt: b.startedAt,
+        
+        // Work status
+        workerMarkedDone: Boolean(b.workerMarkedDone),
+        workerMarkedDoneAt: b.workerMarkedDoneAt,
+        customerMarkedDone: Boolean(b.customerMarkedDone),
+        customerMarkedDoneAt: b.customerMarkedDoneAt,
+        
+        // Payment
+        paymentDetails: b.paymentDetails ? {
+          totalAmount: b.paymentDetails.totalAmount,
+          serviceFee: b.paymentDetails.serviceFee,
+          workerEarnings: b.paymentDetails.workerEarnings
+        } : null,
+        
+        // UI hints for frontend
+        isHidden: visibleInfo.isHidden,
+        showFullInfo: !visibleInfo.isHidden,
+        canMarkDone: ['in-progress', 'worker-assigned'].includes(b.status),
+        canStartWork: b.status === 'worker-assigned'
+      };
+    })
+  });
+}));
+
 // ─── DELETE /api/bookings/:id ──────────────────────────────────────────────────
 // Cancel a booking (customer only, only if pending)
 router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
