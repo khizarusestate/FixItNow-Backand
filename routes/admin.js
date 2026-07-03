@@ -1400,6 +1400,169 @@ router.get('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   return res.json({ success: true, data: sanitizeWorker(worker) });
 }));
 
+// ─── POST /api/admin/workers/:id/approve-account ───────────────────────────────
+// Admin approves a worker's signup application
+router.post('/workers/:id/approve-account', requireAdmin, asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid worker ID.' });
+  }
+
+  const worker = await Worker.findOne({ _id: req.params.id, isDeleted: false });
+  if (!worker) {
+    return res.status(404).json({ success: false, message: 'Worker not found.' });
+  }
+
+  // Check if waiting for approval
+  if (worker.approvalStatus !== 'pending_approval') {
+    return res.status(400).json({
+      success: false,
+      message: `Cannot approve worker with status: ${worker.approvalStatus}. This worker is not pending approval.`,
+    });
+  }
+
+  // Approve the worker
+  worker.approvalStatus = 'approved';
+  worker.status = 'active';
+  worker.approvedAt = new Date();
+  worker.approvedBy = req.admin.id;
+  worker.availability = true;
+  await worker.save();
+
+  // Notify worker
+  emitToUser(String(worker._id), 'worker-account-approved', {
+    message: 'Congratulations! Your worker account has been approved. You can now login and start accepting jobs.',
+    approvedAt: new Date().toISOString(),
+    type: 'account-approved',
+  });
+
+  // Send approval email
+  emailService.sendWorkerApproval(worker).catch(() => {});
+
+  // Create notification
+  createNotification({
+    userId: worker._id,
+    userRole: 'worker',
+    title: 'Account approved!',
+    message: 'Your worker account is approved. You can log in and start accepting jobs.',
+    type: 'success',
+    deliverPush: true,
+  }).catch(() => {});
+
+  // Notify admins
+  emitNotification(
+    'workers',
+    'approved',
+    `Worker ${worker.fullName} account approved by ${req.admin.fullName || 'admin'}`,
+  );
+
+  emitRefresh('workers');
+
+  // Audit log
+  await logAudit(req, 'worker_account_approved', 'worker', worker._id, {
+    fullName: worker.fullName,
+    email: worker.email,
+    services: worker.primaryServiceCategory,
+  });
+
+  return res.json({
+    success: true,
+    message: 'Worker account approved successfully.',
+    data: {
+      workerId: worker._id,
+      fullName: worker.fullName,
+      email: worker.email,
+      approvalStatus: worker.approvalStatus,
+      approvedAt: worker.approvedAt,
+    },
+  });
+}));
+
+// ─── POST /api/admin/workers/:id/reject-account ───────────────────────────────
+// Admin rejects a worker's signup application
+router.post('/workers/:id/reject-account', requireAdmin, asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid worker ID.' });
+  }
+
+  if (!reason || String(reason).trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Rejection reason is required.',
+    });
+  }
+
+  const worker = await Worker.findOne({ _id: req.params.id, isDeleted: false });
+  if (!worker) {
+    return res.status(404).json({ success: false, message: 'Worker not found.' });
+  }
+
+  // Check if waiting for approval
+  if (worker.approvalStatus !== 'pending_approval') {
+    return res.status(400).json({
+      success: false,
+      message: `Cannot reject worker with status: ${worker.approvalStatus}. This worker is not pending approval.`,
+    });
+  }
+
+  // Reject the worker
+  const rejectionReason = String(reason).trim();
+  worker.approvalStatus = 'rejected';
+  worker.status = 'inactive';
+  worker.rejectionReason = rejectionReason;
+  worker.approvedBy = req.admin.id;
+  await worker.save();
+
+  // Notify worker of rejection
+  emitToUser(String(worker._id), 'worker-account-rejected', {
+    message: `Your worker account application has been rejected. Reason: ${rejectionReason}`,
+    reason: rejectionReason,
+    type: 'account-rejected',
+  });
+
+  // Send rejection email
+  emailService.sendWorkerRejection(worker, rejectionReason).catch(() => {});
+
+  // Create notification
+  createNotification({
+    userId: worker._id,
+    userRole: 'worker',
+    title: 'Account rejected',
+    message: `Your application was not approved. Reason: ${rejectionReason}`,
+    type: 'warning',
+    deliverPush: true,
+  }).catch(() => {});
+
+  // Notify admins
+  emitNotification(
+    'workers',
+    'rejected',
+    `Worker ${worker.fullName} account rejected by ${req.admin.fullName || 'admin'}`,
+  );
+
+  emitRefresh('workers');
+
+  // Audit log
+  await logAudit(req, 'worker_account_rejected', 'worker', worker._id, {
+    fullName: worker.fullName,
+    email: worker.email,
+    rejectionReason: rejectionReason,
+  });
+
+  return res.json({
+    success: true,
+    message: 'Worker account rejected successfully.',
+    data: {
+      workerId: worker._id,
+      fullName: worker.fullName,
+      email: worker.email,
+      approvalStatus: worker.approvalStatus,
+      rejectionReason: worker.rejectionReason,
+    },
+  });
+}));
+
 // ─── PATCH /api/admin/workers/:id/status ──────────────────────────────────────
 router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) => {
   const { status, isDisabled } = req.body;
