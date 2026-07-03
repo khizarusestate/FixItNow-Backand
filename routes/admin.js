@@ -877,6 +877,84 @@ router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res)
   });
 }));
 
+// ─── POST /api/admin/bookings/:id/approve-claim ────────────────────────────────
+// Admin approves worker's claim submission and receipt
+// Transitions: claim-pending → worker-assigned
+// Notifies: Worker gets full booking info and can start work
+router.post('/bookings/:id/approve-claim', requireAdmin, asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid booking ID.' });
+  }
+
+  const booking = await Booking.findOne({ _id: req.params.id, isDeleted: false })
+    .populate('claimWorkerId', 'fullName email');
+
+  if (!booking) {
+    return res.status(404).json({ success: false, message: 'Booking not found.' });
+  }
+
+  if (booking.status !== 'claim-pending') {
+    return res.status(400).json({
+      success: false,
+      message: `Cannot approve claim for booking in ${booking.status} status.`
+    });
+  }
+
+  if (!booking.claimWorkerId) {
+    return res.status(400).json({
+      success: false,
+      message: 'No worker claim found for this booking.'
+    });
+  }
+
+  // Update booking status
+  booking.status = 'worker-assigned';
+  booking.workerId = booking.claimWorkerId;
+  booking.approvedAt = new Date();
+  booking.approvedBy = req.admin.id;
+  await booking.save();
+
+  // Notify worker (via socket)
+  emitToUser(String(booking.workerId), 'booking-approved', {
+    bookingId: String(booking._id),
+    message: 'Your claim has been approved! Full details are now visible.',
+    booking: {
+      id: booking._id,
+      status: booking.status,
+      title: booking.serviceTitle,
+      date: booking.date
+    }
+  });
+
+  // Notify customer
+  emitToUser(String(booking.customerId), 'worker-assigned', {
+    bookingId: String(booking._id),
+    message: 'A worker has been assigned to your booking',
+    workerName: booking.claimWorkerId.fullName
+  });
+
+  // Log audit
+  await logAudit(req, 'booking_claim_approved', 'booking', booking._id, {
+    workerId: booking.workerId,
+    workerName: booking.claimWorkerId.fullName,
+    bookingTitle: booking.serviceTitle
+  });
+
+  return res.json({
+    success: true,
+    message: 'Claim approved. Worker can now view full details.',
+    data: {
+      bookingId: booking._id,
+      status: booking.status,
+      worker: {
+        id: booking.workerId,
+        name: booking.claimWorkerId.fullName,
+        email: booking.claimWorkerId.email
+      }
+    }
+  });
+}));
+
 // ─── GET /api/admin/bookings/:id/available-workers ────────────────────────────
 // Get available workers for a booking (filtered by service category)
 router.get('/bookings/:id/available-workers', requireAdmin, asyncHandler(async (req, res) => {
