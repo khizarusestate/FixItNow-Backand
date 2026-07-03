@@ -96,10 +96,21 @@ const bookingSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    approvedAt: {
+      type: Date,
+      default: null,
+      description: 'Set when admin approves the worker claim'
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
+      default: null,
+      description: 'Admin who approved the claim'
+    },
     startedAt: {
       type: Date,
       default: null,
-      description: 'Set when worker claim is approved (actual work begins)'
+      description: 'Set when worker clicks Go to Work (in-progress status)'
     },
     timeline: [{
       status: String,

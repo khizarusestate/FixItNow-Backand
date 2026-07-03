@@ -480,6 +480,75 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
   });
 }));
 
+// ─── POST /api/bookings/:id/start-work ─────────────────────────────────────────
+// Worker marks that they are starting work on the booking
+// Transitions: worker-assigned → in-progress
+// Shows: Full customer info to worker (already visible after assignment)
+// Notifies: Customer that worker has started
+router.post('/:id/start-work', requireWorker, asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid booking ID.' });
+  }
+
+  const booking = await Booking.findOne({ _id: req.params.id, isDeleted: false })
+    .populate('customerId', 'fullName email phone');
+
+  if (!booking) {
+    return res.status(404).json({ success: false, message: 'Booking not found.' });
+  }
+
+  // Verify worker owns this booking
+  if (String(booking.workerId) !== String(req.worker.id)) {
+    return res.status(403).json({
+      success: false,
+      message: 'You can only start work on your assigned bookings.'
+    });
+  }
+
+  // Check booking is in assignable state
+  if (booking.status !== 'worker-assigned') {
+    return res.status(400).json({
+      success: false,
+      message: `Cannot start work on booking in ${booking.status} status.`
+    });
+  }
+
+  // Update status
+  booking.status = 'in-progress';
+  booking.startedAt = new Date();
+  await booking.save();
+
+  // Notify customer that worker has started
+  emitToUser(String(booking.customerId), 'work-started', {
+    bookingId: String(booking._id),
+    message: 'Your worker has started the job',
+    workerName: req.worker.fullName,
+    startTime: new Date().toISOString()
+  });
+
+  // Log activity
+  logger.info('Worker started booking', {
+    workerId: req.worker.id,
+    bookingId: booking._id,
+    serviceTitle: booking.serviceTitle
+  });
+
+  return res.json({
+    success: true,
+    message: 'Work started. Customer has been notified.',
+    data: {
+      bookingId: booking._id,
+      status: booking.status,
+      startedAt: booking.startedAt,
+      customerInfo: {
+        name: booking.customerId.fullName,
+        phone: booking.phone,
+        address: booking.address
+      }
+    }
+  });
+}));
+
 // ─── POST /api/bookings/:id/complete ───────────────────────────────────────────
 // Customer marks done + rating (orange tick). Finalizes when worker also marked done.
 router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
