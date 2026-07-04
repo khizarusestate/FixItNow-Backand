@@ -34,6 +34,7 @@ export const BOOKING_STATUS = {
   IN_PROGRESS: 'in-progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
+  REJECTED: 'rejected',  // When admin rejects worker claim
 }
 
 export const BOOKING_STATUS_VALUES = Object.values(BOOKING_STATUS);
