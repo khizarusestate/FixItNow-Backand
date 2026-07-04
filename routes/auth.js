@@ -1673,9 +1673,6 @@ router.delete(
     });
   }),
 );
-    });
-  }),
-);
 
 // ─── POST /api/auth/google/customer ───────────────────────────────────────────
 router.post(
