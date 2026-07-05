@@ -38,7 +38,8 @@ export async function joinAdminSocketSession(socket, tokenArg) {
     return false;
   }
 
-  if (decoded.role !== 'admin') {
+  // ✅ CRITICAL FIX: Allow both 'admin' AND 'super_admin' roles
+  if (decoded.role !== 'admin' && decoded.role !== 'super_admin') {
     socket.emit('admin-join-error', { message: 'Admin access required', code: 'NOT_ADMIN' });
     return false;
   }

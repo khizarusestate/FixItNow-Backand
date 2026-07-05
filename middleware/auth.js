@@ -117,7 +117,8 @@ export const requireAdmin = asyncHandler(async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Authentication failed.' });
   }
 
-  if (!validateTokenStructure(decoded) || decoded.role !== 'admin') {
+  // ✅ CRITICAL FIX: Allow both 'admin' AND 'super_admin' roles
+  if (!validateTokenStructure(decoded) || (decoded.role !== 'admin' && decoded.role !== 'super_admin')) {
     return res.status(403).json({ success: false, message: 'Admin access required.' });
   }
 
@@ -182,7 +183,9 @@ export const requireSuperAdmin = asyncHandler(async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Authentication failed.' });
   }
 
-  if (!validateTokenStructure(decoded) || decoded.role !== 'admin') {
+  // ✅ CRITICAL FIX: Allow 'admin' or 'super_admin' role to proceed
+  // (will check specifically for super_admin token below)
+  if (!validateTokenStructure(decoded) || (decoded.role !== 'admin' && decoded.role !== 'super_admin')) {
     return res.status(403).json({ success: false, message: 'Admin access required.' });
   }
 
