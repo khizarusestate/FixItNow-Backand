@@ -421,6 +421,10 @@ app.use(
 );
 
 // ─── Rate Limit ──────────────────────────────────────────────────────────────
+// NOTE: Super admin login (/api/admin/login) has rate limiting DISABLED
+// The strictRateLimit and authRateLimit both check isSuperAdminLoginRequest()
+// and skip the rate limit entirely for super admin requests.
+// This allows super admin unlimited login attempts.
 app.use("/api", apiRateLimit);
 app.use("/api/auth", authRateLimit);
 app.use("/api/admin/login", strictRateLimit);

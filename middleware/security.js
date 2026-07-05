@@ -10,9 +10,22 @@ import { readEnvSuperAdminConfig } from "../services/envSuperAdmin.js";
 function isSuperAdminLoginRequest(req) {
   if (req.method !== "POST") return false;
   if (req.body?.loginAs !== ADMIN_PANEL_ROLES.SUPER_ADMIN) return false;
+  
   const { email: envEmail } = readEnvSuperAdminConfig();
   const email = String(req.body?.email || "").toLowerCase().trim();
-  return Boolean(envEmail && email === envEmail);
+  
+  // ✅ CRITICAL: Super admin has unlimited login attempts
+  const isSuperAdmin = Boolean(envEmail && email === envEmail);
+  
+  if (isSuperAdmin) {
+    logger.debug("Super admin request detected", { 
+      email: email,
+      loginAs: req.body?.loginAs,
+      hasEnvEmail: Boolean(envEmail)
+    });
+  }
+  
+  return isSuperAdmin;
 }
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
@@ -22,6 +35,7 @@ export const authRateLimit = rateLimit({
   max: RATE_LIMITS.AUTH_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => isSuperAdminLoginRequest(req), // ✅ Skip super admin login
   message: {
     success: false,
     message:
@@ -55,7 +69,17 @@ export const strictRateLimit = rateLimit({
   max: RATE_LIMITS.STRICT_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => isSuperAdminLoginRequest(req),
+  skip: (req) => {
+    // ✅ CRITICAL: Skip rate limiting for super admin login
+    const isSuperAdmin = isSuperAdminLoginRequest(req);
+    if (isSuperAdmin) {
+      logger.debug("Super admin login request - rate limit skipped", { 
+        email: req.body?.email,
+        ip: req.ip 
+      });
+    }
+    return isSuperAdmin;
+  },
   message: {
     success: false,
     message: "Too many attempts. Please try again after 1 hour.",
