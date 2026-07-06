@@ -44,11 +44,6 @@ const customerSchema = new mongoose.Schema({
     default: "",
     trim: true,
   },
-  address: {
-    type: String,
-    default: "",
-    trim: true,
-  },
   ...geoLocationSchemaFields,
   passwordResetCode: {
     type: String,

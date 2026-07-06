@@ -112,12 +112,6 @@ const workerSchema = new mongoose.Schema({
     default: "",
     trim: true,
   },
-  /** @deprecated Use location */
-  address: {
-    type: String,
-    default: "",
-    trim: true,
-  },
   aboutExperience: {
     type: String,
     default: "",

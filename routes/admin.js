@@ -483,7 +483,7 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
       { customerName: regex },
       { email: regex },
       { serviceTitle: regex },
-      { address: regex },
+      { location: regex },
       { category: regex },
       { phone: regex },
     ];
@@ -497,8 +497,8 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   const [bookings, total, statusAgg] = await Promise.all([
     Booking.find(query)
       .populate('customerId', 'fullName email phone profilePicture')
-      .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
-      .populate('claimWorkerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
+      .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea location profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
+      .populate('claimWorkerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea location profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
       .sort(sort)
       .skip(skip)
       .limit(Number(limit))
@@ -1076,7 +1076,7 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
       category: updatedBooking.category,
       customerName: updatedBooking.customerName,
       phone: updatedBooking.phone,
-      address: updatedBooking.address,
+      location: updatedBooking.location,
       notes: updatedBooking.notes,
       status: updatedBooking.status,
       assignedAt: updatedBooking.assignedAt,
@@ -1146,7 +1146,7 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
         workerId: updatedBooking.workerId,
         category: updatedBooking.category || updatedBooking.serviceCategory,
         phone: updatedBooking.phone,
-        address: updatedBooking.address,
+        location: updatedBooking.location,
         notes: updatedBooking.notes,
         customerId: updatedBooking.customerId,
         createdAt: updatedBooking.createdAt
@@ -1342,7 +1342,7 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
       { primaryServiceCategory: regex },
       { serviceCategories: regex },
       { serviceArea: regex },
-      { address: regex },
+      { location: regex },
     ];
   }
 
@@ -1656,7 +1656,6 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     phoneNumber,
     primaryServiceCategory,
     serviceArea,
-    address,
     password,
     cnicNumber,
     profilePicture,
@@ -1673,7 +1672,7 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(409).json({ success: false, message: 'Worker with this email already exists.' });
   }
 
-  const locLabel = (req.body.location || serviceArea || address || '').trim();
+  const locLabel = (req.body.location || serviceArea || '').trim();
   const worker = await Worker.create({
     fullName,
     emailAddress,
@@ -1681,7 +1680,6 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     primaryServiceCategory,
     location: locLabel,
     serviceArea: locLabel,
-    address: locLabel,
     latitude: req.body.latitude != null ? Number(req.body.latitude) : null,
     longitude: req.body.longitude != null ? Number(req.body.longitude) : null,
     placeId: req.body.placeId || '',
@@ -1714,7 +1712,6 @@ router.put('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
     phoneNumber,
     primaryServiceCategory,
     serviceArea,
-    address,
     status,
     cnicNumber,
     profilePicture,
@@ -2039,7 +2036,6 @@ router.get('/customers', requireAdmin, asyncHandler(async (req, res) => {
       { fullName: regex },
       { email: regex },
       { phone: regex },
-      { address: regex },
       { location: regex },
     ];
   }
@@ -2153,13 +2149,13 @@ router.put('/customers/:id', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid customer ID.' });
   }
 
-  const { fullName, email, phone, address, status, isActive } = req.body;
+  const { fullName, email, phone, status, isActive } = req.body;
   const updateFields = {};
   
   if (fullName) updateFields.fullName = fullName;
   if (email) updateFields.email = email;
   if (phone) updateFields.phone = phone;
-  if (address) updateFields.address = address;
+  applyLocationUpdate(updateFields, req.body);
   if (status) updateFields.status = normalizeCustomerStatusInput(status);
   if (isActive !== undefined) updateFields.isActive = isActive;
 
@@ -2486,7 +2482,6 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
     latitude,
     longitude,
     placeId,
-    address, // legacy alias for location
     currentPassword,
     newPassword
   } = req.body;
@@ -2502,7 +2497,7 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
   if (phone) admin.phone = phone;
 
   if (admin.role !== 'super_admin') {
-    const normalizedLocation = String(location || address || admin.location || '').trim();
+    const normalizedLocation = String(location || admin.location || '').trim();
     if (!normalizedLocation) {
       return res.status(400).json({
         success: false,
