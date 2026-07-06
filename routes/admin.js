@@ -96,7 +96,8 @@ const sanitizeWorker = (worker) => {
     fullName: data.fullName,
     phoneNumber: data.phoneNumber,
     cnicNumber: data.cnicNumber,
-    emailAddress: data.emailAddress,
+    email: data.email,
+    emailAddress: data.email, // Alias for backward compatibility
     serviceCategory: data.primaryServiceCategory,
     primaryServiceCategory: data.primaryServiceCategory,
     serviceCategories: data.serviceCategories,
