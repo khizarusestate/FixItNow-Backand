@@ -1406,7 +1406,7 @@ router.post(
     }
 
     // Check if admin-approved status
-    if (worker.status !== "active" || worker.approvalStatus !== "approved") {
+    if (worker.approvalStatus !== "approved") {
       return res.status(403).json({
         success: false,
         message: "Your account cannot login at this time. Please contact support.",
