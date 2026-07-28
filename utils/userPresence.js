@@ -63,13 +63,13 @@ export async function setUserPresenceOffline(userId, role) {
 
     doc.lastActive = new Date();
 
-    if (role === "worker") {
-      if (!doc.isDisabled && doc.status === WORKER_STATUS.ACTIVE) {
-        doc.status = WORKER_STATUS.INACTIVE;
+    if (role === "customer") {
+      if (doc.isActive !== false && doc.status === CUSTOMER_STATUS.ACTIVE) {
+        doc.status = CUSTOMER_STATUS.INACTIVE;
       }
-    } else if (doc.isActive !== false && doc.status === CUSTOMER_STATUS.ACTIVE) {
-      doc.status = CUSTOMER_STATUS.INACTIVE;
     }
+    // Worker status is no longer auto-flipped to inactive on disconnect -
+    // it stays active regardless of socket connectivity.
 
     await doc.save();
     emitToAdmin("refresh", {
