@@ -2300,6 +2300,8 @@ router.post('/services', requireAdmin, asyncHandler(async (req, res) => {
 
   emitRefresh('services');
   emitNotification('services', 'created', `New service added: ${service.name}`);
+  cacheDelByPrefix('fixitnow:public:services').catch(() => {});
+  cacheDelByPrefix('fixitnow:public:categories').catch(() => {});
   return res.status(201).json({ success: true, message: 'Service created successfully.', data: service });
 }));
 
@@ -2327,6 +2329,8 @@ router.patch('/services/:id', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   emitRefresh('services');
+  cacheDelByPrefix('fixitnow:public:services').catch(() => {});
+  cacheDelByPrefix('fixitnow:public:categories').catch(() => {});
   // No notification for updates (only for new services)
   return res.json({ success: true, message: 'Service updated successfully.', data: service });
 }));
@@ -2343,6 +2347,8 @@ router.delete('/services/:id', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   emitRefresh('services');
+  cacheDelByPrefix('fixitnow:public:services').catch(() => {});
+  cacheDelByPrefix('fixitnow:public:categories').catch(() => {});
 
   await logAudit(req, 'service_delete', 'service', service._id, {
     name: service.name,
