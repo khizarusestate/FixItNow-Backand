@@ -35,7 +35,7 @@ export async function notifyWorkersOfHighPriorityJob(booking) {
     isDeleted: false,
     isDisabled: { $ne: true },
     availability: true,
-    status: { $in: ["approved", "active", "inactive"] },
+    status: { $in: ["active", "inactive"] },
   })
     .select(
       "primaryServiceCategory primaryServiceName primaryServiceId services serviceCategories location serviceArea address latitude longitude",

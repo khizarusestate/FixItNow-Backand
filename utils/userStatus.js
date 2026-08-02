@@ -3,13 +3,26 @@ import {
   CUSTOMER_STATUS_VALUES,
   WORKER_STATUS,
   WORKER_STATUS_VALUES,
+  APPROVAL_STATUS,
+  APPROVAL_STATUS_VALUES,
 } from './constants.js';
 
-/** Admin filter: "pending" means awaiting approval (not_approved in DB). */
+/**
+ * Admin filter for the worker list: "pending" / "approved" / "rejected" describe
+ * the approval workflow, which lives on `approvalStatus` — a separate field from
+ * the online/offline `status` field. Returns { field, value } so the caller
+ * queries the field that actually holds the requested value.
+ */
 export function resolveWorkerListStatusFilter(status) {
   if (!status || status === 'all') return null;
-  if (status === 'pending') return WORKER_STATUS.NOT_APPROVED;
-  return status;
+  if (status === 'pending') return { field: 'approvalStatus', value: APPROVAL_STATUS.PENDING_APPROVAL };
+  if (APPROVAL_STATUS_VALUES.includes(status)) {
+    return { field: 'approvalStatus', value: status };
+  }
+  if (WORKER_STATUS_VALUES.includes(status)) {
+    return { field: 'status', value: status };
+  }
+  return null;
 }
 
 export function resolveCustomerListStatusFilter(status) {

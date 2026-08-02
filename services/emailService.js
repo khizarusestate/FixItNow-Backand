@@ -68,14 +68,29 @@ export const emailService = {
   /** Worker account approved by admin */
   async sendWorkerApproval(worker) {
     return sendTemplatedEmail(
-      worker.emailAddress,
+      worker.email,
       "Your Worker Application Has Been Approved!",
       "worker-approved",
       {
         fullName: worker.fullName,
-        email: worker.emailAddress,
+        email: worker.email,
         appUrl: env.FRONTEND_URL,
       },
+    );
+  },
+
+  /** Worker account rejected by admin */
+  async sendWorkerRejection(worker, reason) {
+    const html = `
+      <p>Hi ${worker.fullName || "there"},</p>
+      <p>Thank you for applying to join Fix It Now as a worker. After review, we're unable to approve your application at this time.</p>
+      ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+      <p>If you believe this is a mistake or would like more information, please contact support.</p>
+    `;
+    return sendPlainEmail(
+      worker.email,
+      "Fix It Now — worker application update",
+      html,
     );
   },
 
@@ -87,7 +102,7 @@ export const emailService = {
       <p>If you believe this is a mistake, please contact support.</p>
     `;
     return sendPlainEmail(
-      worker.emailAddress,
+      worker.email,
       "Fix It Now — account disabled",
       html,
     );
@@ -101,7 +116,7 @@ export const emailService = {
       <p>If you need assistance, please contact support.</p>
     `;
     return sendPlainEmail(
-      worker.emailAddress,
+      worker.email,
       "Fix It Now — account deleted",
       html,
     );

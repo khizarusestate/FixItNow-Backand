@@ -109,6 +109,9 @@ const sanitizeWorker = (worker) => {
     signupStep: data.signupStep || '',
     availability: data.availability ?? true,
     status: data.status,
+    approvalStatus: data.approvalStatus,
+    rejectionReason: data.rejectionReason || '',
+    approvedAt: data.approvedAt || null,
     isDisabled: data.isDisabled ?? false,
     joinDate: data.joinDate,
     lastActive: data.lastActive,
@@ -498,8 +501,8 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   const [bookings, total, statusAgg] = await Promise.all([
     Booking.find(query)
       .populate('customerId', 'fullName email phone profilePicture')
-      .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea location profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
-      .populate('claimWorkerId', 'fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea location profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
+      .populate('workerId', 'fullName phoneNumber email primaryServiceCategory serviceCategories serviceArea location profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
+      .populate('claimWorkerId', 'fullName phoneNumber email primaryServiceCategory serviceCategories serviceArea location profilePicture availability status lastActive totalJobs completedJobs totalEarnings')
       .sort(sort)
       .skip(skip)
       .limit(Number(limit))
@@ -973,12 +976,12 @@ router.get('/bookings/:id/available-workers', requireAdmin, asyncHandler(async (
   const serviceQuery = booking.serviceCategory || booking.serviceTitle;
   
   const workers = await Worker.find({
-    status: { $in: ['approved', 'active'] },
+    status: 'active',
     $or: [
       { primaryServiceCategory: { $regex: serviceQuery, $options: 'i' } },
       { primaryServiceCategory: { $regex: new RegExp(serviceQuery.split(' ').join('|'), 'i') } }
     ]
-  }).select('fullName emailAddress phoneNumber primaryServiceCategory yearsOfExperience totalJobs rating');
+  }).select('fullName email phoneNumber primaryServiceCategory yearsOfExperience totalJobs rating');
 
   res.json({
     success: true,
@@ -991,7 +994,7 @@ router.get('/bookings/:id/available-workers', requireAdmin, asyncHandler(async (
       workers: workers.map(w => ({
         _id: w._id,
         fullName: w.fullName,
-        email: w.emailAddress,
+        email: w.email,
         phoneNumber: w.phoneNumber,
         serviceCategory: w.primaryServiceCategory,
         yearsOfExperience: w.yearsOfExperience,
@@ -1157,7 +1160,7 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
         fullName: worker.fullName,
         phoneNumber: worker.phoneNumber,
         serviceCategory: worker.primaryServiceCategory,
-        emailAddress: worker.emailAddress,
+        emailAddress: worker.email,
         status: worker.status,
         rating: worker.rating?.toFixed(1) || '0.0',
         totalReviews: worker.totalReviews || 0
@@ -1321,7 +1324,7 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
 
   const resolvedStatus = resolveWorkerListStatusFilter(status);
   if (resolvedStatus) {
-    query.status = resolvedStatus;
+    query[resolvedStatus.field] = resolvedStatus.value;
   }
 
   if (startDate || endDate) {
@@ -1338,7 +1341,7 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
     const regex = new RegExp(String(search).trim(), 'i');
     query.$or = [
       { fullName: regex },
-      { emailAddress: regex },
+      { email: regex },
       { phoneNumber: regex },
       { primaryServiceCategory: regex },
       { serviceCategories: regex },
@@ -1351,27 +1354,35 @@ router.get('/workers', requireAdmin, asyncHandler(async (req, res) => {
   const sort = { [sortBy]: order === 'asc' ? 1 : -1 };
   const baseMatch = { isDeleted: false };
 
-  const [workers, total, statusAgg] = await Promise.all([
+  const [workers, total, approvalAgg, statusAgg] = await Promise.all([
     Worker.find(query).sort(sort).skip(skip).limit(Number(limit)).select('-password').lean(),
     Worker.countDocuments(query),
+    Worker.aggregate([
+      { $match: baseMatch },
+      { $group: { _id: '$approvalStatus', count: { $sum: 1 } } },
+    ]),
     Worker.aggregate([
       { $match: baseMatch },
       { $group: { _id: '$status', count: { $sum: 1 } } },
     ]),
   ]);
 
-  const counts = statusAgg.reduce((acc, row) => {
+  const approvalCounts = approvalAgg.reduce((acc, row) => {
+    acc[row._id] = row.count;
+    return acc;
+  }, {});
+  const statusCounts = statusAgg.reduce((acc, row) => {
     acc[row._id] = row.count;
     return acc;
   }, {});
 
   const stats = {
-    pending: counts.not_approved || 0,
-    approved: counts.approved || 0,
-    active: counts.active || 0,
-    rejected: counts.rejected || 0,
-    inactive: counts.inactive || 0,
-    total: Object.values(counts).reduce((a, b) => a + b, 0),
+    pending: approvalCounts.pending_approval || 0,
+    approved: approvalCounts.approved || 0,
+    rejected: approvalCounts.rejected || 0,
+    active: statusCounts.active || 0,
+    inactive: statusCounts.inactive || 0,
+    total: Object.values(approvalCounts).reduce((a, b) => a + b, 0),
   };
 
   return res.json({
@@ -1565,17 +1576,24 @@ router.post('/workers/:id/reject-account', requireAdmin, asyncHandler(async (req
 }));
 
 // ─── PATCH /api/admin/workers/:id/status ──────────────────────────────────────
+// Toggles the worker's online/offline/suspended state (`status`) and/or `isDisabled`.
+// Approval decisions (approve/reject a pending signup) are handled separately by
+// POST /workers/:id/approve-account and /workers/:id/reject-account — those also
+// touch approvalStatus, approvedAt/approvedBy, and send the relevant emails, so
+// this endpoint intentionally does not accept 'approved' / 'rejected' / 'not_approved'.
 router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) => {
   const { status, isDisabled } = req.body;
-  const validStatuses = ['not_approved', 'approved', 'rejected', 'active', 'inactive'];
+  const validStatuses = ['active', 'inactive', 'suspended'];
 
   if (!status && isDisabled === undefined) {
     return res.status(400).json({ success: false, message: 'Provide status and/or isDisabled.' });
   }
 
-  const normalizedStatus = status ? normalizeWorkerStatusInput(status) : null;
-  if (normalizedStatus && !validStatuses.includes(normalizedStatus)) {
-    return res.status(400).json({ success: false, message: `Status must be one of: ${validStatuses.join(', ')}.` });
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Status must be one of: ${validStatuses.join(', ')}. To approve or reject a pending worker, use the approve/reject actions instead.`,
+    });
   }
 
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -1583,50 +1601,21 @@ router.patch('/workers/:id/status', requireAdmin, asyncHandler(async (req, res) 
   }
 
   const updateFields = {};
-  if (normalizedStatus) {
-    updateFields.status =
-      normalizedStatus === 'approved' ? WORKER_STATUS.ACTIVE : normalizedStatus;
-  }
+  if (status) updateFields.status = status;
   if (isDisabled !== undefined) updateFields.isDisabled = Boolean(isDisabled);
-  const worker = await Worker.findByIdAndUpdate(req.params.id, updateFields, { new: true }).select('-password');
+  const worker = await Worker.findByIdAndUpdate(req.params.id, updateFields, { new: true, runValidators: true }).select('-password');
   if (!worker) {
     return res.status(404).json({ success: false, message: 'Worker not found.' });
   }
 
   emitRefresh('workers');
 
-  await logAudit(req, normalizedStatus === 'approved' ? 'worker_approve' : (normalizedStatus === 'rejected' ? 'worker_reject' : 'worker_status_change'), 'worker', worker._id, {
-    status: normalizedStatus,
+  await logAudit(req, 'worker_status_change', 'worker', worker._id, {
+    status,
     fullName: worker.fullName
   });
 
-  // Notify worker if approved/rejected (separate from advertisement notifications)
-  if (normalizedStatus === 'approved') {
-    emitToUser(String(worker._id), 'worker-account-approved', {
-      message: 'Congratulations! Your worker account has been approved. You can now login and start accepting jobs.',
-      approvedAt: new Date().toISOString()
-    });
-    emailService.sendWorkerApproval(worker).catch(() => {});
-    createNotification({
-      userId: worker._id,
-      userRole: 'worker',
-      title: 'Account approved',
-      message: 'Your worker account is approved. You can log in and accept jobs.',
-      type: 'success',
-    }).catch(() => {});
-  } else if (normalizedStatus === 'rejected') {
-    emitToUser(String(worker._id), 'worker-account-rejected', {
-      message: 'Your worker account application has been rejected. Please contact support for more information.',
-      rejectedAt: new Date().toISOString()
-    });
-    createNotification({
-      userId: worker._id,
-      userRole: 'worker',
-      title: 'Application rejected',
-      message: 'Your worker application was rejected. Contact support for help.',
-      type: 'warning',
-    }).catch(() => {});
-  } else if (isDisabled === true) {
+  if (isDisabled === true) {
     emitToUser(String(worker._id), 'account-deleted', {
       message: 'Your worker account has been disabled by an administrator.',
     });
@@ -1663,20 +1652,27 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     availability
   } = req.body;
 
-  if (!fullName || !emailAddress || !phoneNumber || !primaryServiceCategory || !password) {
-    return res.status(400).json({ success: false, message: 'Full name, email, phone, service category, and password are required.' });
+  const email = String(emailAddress || '').trim().toLowerCase();
+  const cnicClean = String(cnicNumber || '').replace(/-/g, '').trim();
+
+  if (!fullName || !email || !phoneNumber || !primaryServiceCategory || !password || !cnicClean) {
+    return res.status(400).json({ success: false, message: 'Full name, email, phone, service category, password, and CNIC are required.' });
   }
 
-  // Check if worker already exists
-  const existingWorker = await Worker.findOne({ emailAddress });
+  // Check if worker already exists (schema field is `email`, not `emailAddress`)
+  const existingWorker = await Worker.findOne({ email, isDeleted: false });
   if (existingWorker) {
     return res.status(409).json({ success: false, message: 'Worker with this email already exists.' });
+  }
+  const duplicateCnic = await Worker.findOne({ cnicNumber: cnicClean, isDeleted: false });
+  if (duplicateCnic) {
+    return res.status(409).json({ success: false, message: 'This CNIC is already registered.' });
   }
 
   const locLabel = (req.body.location || serviceArea || '').trim();
   const worker = await Worker.create({
     fullName,
-    emailAddress,
+    email,
     phoneNumber,
     primaryServiceCategory,
     location: locLabel,
@@ -1686,13 +1682,18 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     placeId: req.body.placeId || '',
     yearsOfExperience: 0,
     password,
-    cnicNumber: cnicNumber || '',
-    aboutExperience: '',
-    experience: '',
+    cnicNumber: cnicClean,
     profilePicture: profilePicture || null,
     availability: availability !== undefined ? availability : true,
-    hourlyRate: 0,
-    status: 'approved',
+    // Admin-created workers are pre-approved: `status` and `approvalStatus`
+    // are separate fields — 'approved' is not a valid `status` enum value.
+    status: 'active',
+    approvalStatus: 'approved',
+    approvedAt: new Date(),
+    approvedBy: req.admin?.id || null,
+    emailVerified: true,
+    authProvider: 'local',
+    signupStep: 'complete',
   });
 
   emitRefresh('workers');
@@ -1722,7 +1723,14 @@ router.put('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   const updateFields = {};
 
   if (fullName !== undefined) updateFields.fullName = fullName;
-  if (emailAddress !== undefined) updateFields.emailAddress = emailAddress;
+  if (emailAddress !== undefined) {
+    const email = String(emailAddress).trim().toLowerCase();
+    const existingEmail = await Worker.findOne({ email, isDeleted: false, _id: { $ne: req.params.id } });
+    if (existingEmail) {
+      return res.status(409).json({ success: false, message: 'Another worker already uses this email.' });
+    }
+    updateFields.email = email;
+  }
   if (phoneNumber !== undefined) updateFields.phoneNumber = phoneNumber;
   if (primaryServiceCategory !== undefined) updateFields.primaryServiceCategory = primaryServiceCategory;
   applyLocationUpdate(updateFields, req.body);

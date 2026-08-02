@@ -27,7 +27,7 @@ export async function rankWorkersForBooking(booking) {
     : null;
 
   const query = {
-    status: { $in: ["approved", "active"] },
+    status: "active",
     isDeleted: false,
     availability: { $ne: false },
   };
@@ -41,7 +41,7 @@ export async function rankWorkersForBooking(booking) {
 
   const workers = await Worker.find(query)
     .select(
-      "fullName phoneNumber emailAddress primaryServiceCategory yearsOfExperience rating totalJobs completedJobs availability status",
+      "fullName phoneNumber email primaryServiceCategory yearsOfExperience rating totalJobs completedJobs availability status",
     )
     .lean();
 

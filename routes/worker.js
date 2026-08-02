@@ -70,7 +70,8 @@ const toWorkerProfilePayload = (worker) => {
     id: worker._id,
     _id: worker._id,
     fullName: worker.fullName,
-    emailAddress: worker.emailAddress,
+    email: worker.email,
+    emailAddress: worker.email,
     phoneNumber: worker.phoneNumber,
     serviceCategory: worker.primaryServiceCategory,
     primaryServiceCategory: worker.primaryServiceCategory,
@@ -178,7 +179,7 @@ router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
   if (fullName !== undefined) updateFields.fullName = fullName;
   if (emailAddress !== undefined) {
     const email = emailAddress.toLowerCase().trim();
-    const existingWorker = await Worker.findOne({ emailAddress: email, _id: { $ne: req.worker.id }, isDeleted: false });
+    const existingWorker = await Worker.findOne({ email, _id: { $ne: req.worker.id }, isDeleted: false });
     if (existingWorker) {
       return res.status(409).json({ success: false, message: 'Worker with this email already exists.' });
     }
@@ -186,7 +187,7 @@ router.put('/profile', requireWorker, asyncHandler(async (req, res) => {
     if (existingCustomer) {
       return res.status(409).json({ success: false, message: 'This email is already registered as a customer.' });
     }
-    updateFields.emailAddress = email;
+    updateFields.email = email;
   }
   if (phoneNumber !== undefined) updateFields.phoneNumber = phoneNumber;
   if (cnicNumber !== undefined) {
@@ -394,7 +395,7 @@ router.patch('/jobs/:id/status', requireWorker, asyncHandler(async (req, res) =>
 // Get list of active workers
 router.get('/list', asyncHandler(async (req, res) => {
   const { category, page = 1, limit = 50, sortBy = 'rating', order = 'desc' } = req.query;
-  const query = { status: 'approved', isDeleted: false };
+  const query = { status: 'active', isDeleted: false };
   if (category) query.primaryServiceCategory = category;
 
   const skip = (Number(page) - 1) * Number(limit);
@@ -402,7 +403,7 @@ router.get('/list', asyncHandler(async (req, res) => {
 
   const [workers, total] = await Promise.all([
     Worker.find(query)
-      .select('fullName phoneNumber emailAddress primaryServiceCategory serviceCategories serviceArea address availability profilePicture joinDate')
+      .select('fullName phoneNumber email primaryServiceCategory serviceCategories serviceArea location availability profilePicture joinDate')
       .sort(sort)
       .skip(skip)
       .limit(Number(limit))

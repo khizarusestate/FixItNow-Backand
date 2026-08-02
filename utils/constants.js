@@ -26,6 +26,15 @@ export const WORKER_STATUS = {
 
 export const WORKER_STATUS_VALUES = Object.values(WORKER_STATUS);
 
+// ─── Worker Approval Statuses (separate field from WORKER_STATUS — see workerSchema.js) ──
+export const APPROVAL_STATUS = {
+  PENDING_APPROVAL: 'pending_approval',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+}
+
+export const APPROVAL_STATUS_VALUES = Object.values(APPROVAL_STATUS);
+
 // ─── Booking Statuses ────────────────────────────────────────────────────────────
 export const BOOKING_STATUS = {
   PENDING: 'pending',

@@ -333,7 +333,7 @@ router.post('/',
 // Get current customer's bookings (with worker details when assigned)
 router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
   const bookings = await Booking.find({ customerId: req.customer.id, isDeleted: false })
-    .populate('workerId', 'fullName phoneNumber emailAddress primaryServiceCategory')
+    .populate('workerId', 'fullName phoneNumber email primaryServiceCategory')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -362,7 +362,7 @@ router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
         id: b.workerId._id,
         fullName: b.workerId.fullName,
         phoneNumber: b.workerId.phoneNumber,
-        emailAddress: b.workerId.emailAddress,
+        emailAddress: b.workerId.email,
         primaryServiceCategory: b.workerId.primaryServiceCategory
       } : null
     }))

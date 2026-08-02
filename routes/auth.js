@@ -97,7 +97,6 @@ function formatCustomerData(customer) {
 }
 
 function formatWorkerData(worker) {
-  const needsProfessionalProfile = worker.signupStep !== "complete";
   return {
     id: worker._id,
     _id: worker._id,
@@ -106,7 +105,6 @@ function formatWorkerData(worker) {
     fullName: worker.fullName,
     signupStep: worker.signupStep,
     emailVerified: Boolean(worker.emailVerified),
-    needsProfessionalProfile,
     email: worker.email,
     phoneNumber: worker.phoneNumber,
     authProvider: worker.authProvider || "local",
@@ -346,7 +344,7 @@ router.post(
 router.post(
   "/verify-email",
   asyncHandler(async (req, res) => {
-    const { email, code, role } = req.body;
+    const { email, code } = req.body;
     if (!email || !code) {
       return res.status(400).json({
         success: false,
@@ -355,53 +353,6 @@ router.post(
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    if (String(role || "").toLowerCase() === "worker") {
-      const worker = await Worker.findOne({
-        email: normalizedEmail,
-        isDeleted: false,
-      });
-      if (!worker) {
-        return res.status(404).json({
-          success: false,
-          message: "No worker account found for this email.",
-        });
-      }
-      if (worker.emailVerified) {
-        return res.json({
-          success: true,
-          message: "Email already verified. Complete your professional details.",
-        });
-      }
-      if (
-        !worker.emailVerificationCode ||
-        worker.emailVerificationCode !== String(code).trim()
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid verification code.",
-        });
-      }
-      if (
-        worker.emailVerificationExpiresAt &&
-        worker.emailVerificationExpiresAt < new Date()
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Verification code expired. Request a new code.",
-          code: "CODE_EXPIRED",
-        });
-      }
-      worker.emailVerified = true;
-      worker.signupStep = "basic_complete";
-      worker.emailVerificationCode = null;
-      worker.emailVerificationExpiresAt = null;
-      await worker.save();
-      return res.json({
-        success: true,
-        message: "Email verified. Complete your professional details.",
-        data: { signupStep: worker.signupStep },
-      });
-    }
 
     const customer = await Customer.findOne({
       email: normalizedEmail,
@@ -1159,9 +1110,6 @@ router.post(
       password,
       phoneNumber,
       cnicNumber,
-      primaryServiceId,
-      primaryServiceName,
-      primaryServiceCategory,
     } = req.body;
 
     // Validate required fields
@@ -1254,34 +1202,35 @@ router.post(
       });
     }
 
-    // Create worker with single signup - all data collected
-    const worker = await Worker.create({
+    // Build worker with single signup - all data collected.
+    // IMPORTANT: primaryServiceCategory is required whenever signupStep === "complete",
+    // so services must be resolved and applied BEFORE the doc is validated/saved.
+    // Worker.create() validates immediately, before there's a chance to backfill
+    // primaryServiceCategory from the services array — use new Worker() + one save() instead.
+    const worker = new Worker({
       fullName: fullNameStr,
       email: emailStr,
       password: passwordStr,
       phoneNumber: phoneStr,
       cnicNumber: cnicStored,
       emailVerified: true,  // Email verified by signup form
-      primaryServiceCategory,
-      primaryServiceId,
-      primaryServiceName,
       verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,
-      
+
       // NEW: Approval workflow
       status: "inactive",              // Cannot login
       approvalStatus: "pending_approval", // Waiting for admin review
       signupStep: "complete",          // Single step signup complete
-      
+
       authProvider: "local",
       availability: false,             // Worker not available until approved
     });
 
-    // Apply resolved services
+    // Apply resolved services (sets primaryServiceCategory/primaryServiceId/primaryServiceName)
     applyWorkerServices(worker, services);
-    
+
     // Handle location if provided
     applyLocationUpdate(worker, req.body);
-    
+
     await worker.save();
 
     // Notify all admins of pending worker approval
@@ -1309,18 +1258,6 @@ router.post(
         approvalStatus: worker.approvalStatus,
         message: "Your account is pending admin approval",
       },
-    });
-  }),
-);
-
-// ─── POST /api/auth/worker/register/professional (DEPRECATED - use single /register form) ───
-router.post(
-  "/worker/register/professional",
-  asyncHandler(async (req, res) => {
-    return res.status(410).json({
-      success: false,
-      message: "This endpoint has been deprecated. Please use POST /api/auth/worker/register with all fields including verification photo.",
-      code: "ENDPOINT_DEPRECATED",
     });
   }),
 );
@@ -1800,159 +1737,6 @@ router.post(
           success: true,
           message: "Signed in with Google.",
           customer: formatCustomerData(customer),
-        },
-      }),
-    );
-  }),
-);
-
-// ─── POST /api/auth/google/worker ─────────────────────────────────────────────
-router.post(
-  "/google/worker",
-  asyncHandler(async (req, res) => {
-    if (!isGoogleAuthEnabled()) {
-      return res.status(503).json({
-        success: false,
-        message: "Google sign-in is not configured on the server.",
-        code: "GOOGLE_NOT_CONFIGURED",
-      });
-    }
-
-    const { rememberMe } = req.body;
-    const credential = readGoogleCredential(req.body);
-    if (!credential) {
-      return res.status(400).json({
-        success: false,
-        message: "Google credential is required.",
-        code: "GOOGLE_CREDENTIAL_REQUIRED",
-      });
-    }
-
-    let payload;
-    try {
-      payload = await verifyGoogleIdToken(credential);
-    } catch (err) {
-      const status = err.code === "GOOGLE_NOT_CONFIGURED" ? 503 : 401;
-      return res.status(status).json({
-        success: false,
-        message: err.message || "Google sign-in failed.",
-        code: err.code || "GOOGLE_AUTH_FAILED",
-      });
-    }
-    const email = String(payload.email).toLowerCase().trim();
-    const googleId = String(payload.sub);
-    const fullName =
-      String(payload.name || "").trim() ||
-      email.split("@")[0] ||
-      "Worker";
-    const nameParts = fullName.split(/\s+/).filter(Boolean);
-    const firstName =
-      String(payload.given_name || "").trim() || nameParts[0] || "";
-    const lastName =
-      String(payload.family_name || "").trim() ||
-      nameParts.slice(1).join(" ") ||
-      "";
-
-    const existingCustomer = await Customer.findOne({
-      email,
-      isDeleted: false,
-    });
-    if (existingCustomer) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "This email is registered as a customer. Use customer sign-in or a different email.",
-      });
-    }
-
-    let worker = await Worker.findOne({
-      $or: [{ googleId }, { email: email }],
-      isDeleted: false,
-    });
-
-    if (worker && worker.email !== email && worker.googleId !== googleId) {
-      return res.status(409).json({
-        success: false,
-        message: "This Google account cannot be linked. Contact support.",
-      });
-    }
-
-    if (!worker) {
-      worker = await Worker.create({
-        firstName,
-        lastName,
-        fullName,
-        email: email,
-        googleId,
-        authProvider: "google",
-        phoneNumber: "",
-        cnicNumber: "",
-        primaryServiceCategory: "",
-        emailVerified: true,
-        signupStep: "basic_complete",
-        status: "not_approved",
-      });
-      emitNotification("workers", "created", `New worker joined: ${worker.fullName}`);
-      emitRefresh("workers");
-      notifyAllAdmins({
-        title: "New worker",
-        message: `${worker.fullName} signed up with Google.`,
-        type: "info",
-        relatedEntityId: worker._id,
-      }).catch(() => {});
-    } else {
-      if (!worker.googleId) {
-        worker.googleId = googleId;
-        worker.authProvider = "google";
-      }
-      if (!worker.fullName?.trim()) worker.fullName = fullName;
-      worker.emailVerified = true;
-      if (worker.signupStep === "awaiting_email") {
-        worker.signupStep = "basic_complete";
-      }
-      worker.lastActive = new Date();
-      await worker.save();
-    }
-
-    if (worker.isDisabled) {
-      return res.status(403).json({
-        success: false,
-        message: "Your worker account has been disabled.",
-      });
-    }
-    if (worker.status === "rejected") {
-      return res.status(403).json({
-        success: false,
-        message: "Your worker application was rejected.",
-      });
-    }
-
-    const tokenPayload = {
-      id: worker._id,
-      role: "worker",
-      email: worker.email,
-    };
-    const token = createToken(tokenPayload);
-
-    let refreshToken;
-    if (env.USE_REFRESH_TOKENS) {
-      refreshToken = await createRefreshToken(
-        worker._id,
-        "worker",
-        req,
-        refreshTokenExpiryDays(rememberMe),
-      );
-    }
-
-    return res.json(
-      attachAuthToResponse(res, {
-        accessToken: token,
-        refreshToken,
-        body: {
-          success: true,
-          message: "Signed in with Google.",
-          worker: formatWorkerData(worker),
-          needsProfessionalProfile: worker.signupStep !== "complete",
         },
       }),
     );

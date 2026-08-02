@@ -23,7 +23,7 @@ router.get('/', asyncHandler(async (req, res) => {
     const categoryLabel = categoryMeta?.label || category;
     const categoryPattern = new RegExp(`^${categoryLabel}$`, 'i');
     const workers = await Worker.find({
-      status: 'approved',
+      status: 'active',
       isDeleted: false,
       $or: [
         { primaryServiceCategory: categoryPattern },
@@ -46,7 +46,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
   // Get worker counts per category
   const counts = await Worker.aggregate([
-    { $match: { status: 'approved', isDeleted: false } },
+    { $match: { status: 'active', isDeleted: false } },
     { $group: { _id: '$primaryServiceCategory', count: { $sum: 1 } } },
   ]);
 

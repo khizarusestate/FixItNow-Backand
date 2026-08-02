@@ -24,7 +24,7 @@ async function checkProfileComplete(userId, userType) {
   if (userType === 'worker') {
     const worker = await Worker.findById(userId).lean();
     if (!worker) return { complete: false, message: 'Worker not found.' };
-    if (!worker.fullName || !worker.emailAddress || !worker.phoneNumber) {
+    if (!worker.fullName || !worker.email || !worker.phoneNumber) {
       return { complete: false, message: 'Please complete your profile before submitting a review.' };
     }
     return { complete: true, user: worker };

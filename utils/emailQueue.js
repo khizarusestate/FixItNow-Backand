@@ -158,7 +158,7 @@ export const processEmailQueue = async (emailService) => {
         );
         break;
       case 'worker_approved':
-        await emailService.sendWorkerApproval({ emailAddress: job.to, fullName: job.name });
+        await emailService.sendWorkerApproval({ email: job.to, fullName: job.name });
         break;
       default:
         console.warn(`Unknown email job type: ${job.type}`);

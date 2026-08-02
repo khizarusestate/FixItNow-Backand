@@ -112,18 +112,6 @@ const workerSchema = new mongoose.Schema({
     default: "",
     trim: true,
   },
-  aboutExperience: {
-    type: String,
-    default: "",
-    trim: true,
-    maxlength: 500,
-  },
-  experience: {
-    type: String,
-    default: "",
-    trim: true,
-    maxlength: 1000,
-  },
   emailVerificationCode: {
     type: String,
     default: null,
@@ -232,10 +220,6 @@ const workerSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
-  hourlyRate: {
-    type: Number,
-    default: 0,
-  },
   joinDate: {
     type: Date,
     default: Date.now,
@@ -281,16 +265,10 @@ workerSchema.pre("save", async function (next) {
       this.cnicNumber = digits;
     }
   }
-  const label = (
-    this.location ||
-    this.serviceArea ||
-    this.address ||
-    ""
-  ).trim();
+  const label = (this.location || this.serviceArea || "").trim();
   if (label) {
     this.location = label;
     this.serviceArea = label;
-    this.address = label;
   }
   if (this.isModified("password")) {
     this.password = await bcrypt.hash(this.password, 12);
