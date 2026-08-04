@@ -2271,10 +2271,26 @@ router.get('/services', requireAdmin, asyncHandler(async (req, res) => {
     inactive: await Service.countDocuments({ ...query, isActive: false })
   };
 
-  return res.json({
-    success: true,
-    data: {
-      services: services.map(s => ({
+  // Per-service counts: active workers offering it, total bookings made for it.
+  // Bounded to the current page (not the full collection) to keep this cheap.
+  const enrichedServices = await Promise.all(
+    services.map(async (s) => {
+      const [activeWorkers, totalBookings, ratingAgg] = await Promise.all([
+        Worker.countDocuments({
+          primaryServiceCategory: s.category,
+          status: 'active',
+          isDeleted: false,
+        }),
+        Booking.countDocuments({
+          isDeleted: false,
+          $or: [{ serviceId: s._id }, { serviceCategory: s.category }],
+        }),
+        Worker.aggregate([
+          { $match: { primaryServiceCategory: s.category, isDeleted: false, rating: { $gt: 0 } } },
+          { $group: { _id: null, avg: { $avg: '$rating' } } },
+        ]),
+      ]);
+      return {
         id: s._id,
         name: s.name,
         description: s.description,
@@ -2286,8 +2302,18 @@ router.get('/services', requireAdmin, asyncHandler(async (req, res) => {
         requirements: s.requirements,
         isActive: s.isActive,
         createdAt: s.createdAt,
-        updatedAt: s.updatedAt
-      })),
+        updatedAt: s.updatedAt,
+        activeWorkers,
+        totalBookings,
+        avgRating: ratingAgg[0]?.avg || 0,
+      };
+    }),
+  );
+
+  return res.json({
+    success: true,
+    data: {
+      services: enrichedServices,
       stats,
       categories
     },
@@ -2314,7 +2340,7 @@ router.get('/services/:id', requireAdmin, asyncHandler(async (req, res) => {
 
 // ─── POST /api/admin/services ──────────────────────────────────────────────────
 router.post('/services', requireAdmin, asyncHandler(async (req, res) => {
-  const { name, description, category, price, icon, isActive, estimatedDuration, requirements } = req.body;
+  const { name, description, category, price, icon, image, isActive, estimatedDuration, requirements } = req.body;
 
   if (!name || !description || !category) {
     return res.status(400).json({ success: false, message: 'Name, description, and category are required.' });
@@ -2325,6 +2351,7 @@ router.post('/services', requireAdmin, asyncHandler(async (req, res) => {
     description,
     category,
     icon: icon || 'Wrench',
+    image: image || null,
     price: price || 0,
     isActive: isActive !== undefined ? isActive : true,
     estimatedDuration: estimatedDuration || null,
@@ -2344,7 +2371,7 @@ router.patch('/services/:id', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid service ID.' });
   }
 
-  const { name, description, category, price, icon, isActive, estimatedDuration, requirements } = req.body;
+  const { name, description, category, price, icon, image, isActive, estimatedDuration, requirements } = req.body;
   const updateFields = {};
 
   if (name !== undefined) updateFields.name = name;
@@ -2352,13 +2379,40 @@ router.patch('/services/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (category !== undefined) updateFields.category = category;
   if (price !== undefined) updateFields.price = price;
   if (icon !== undefined) updateFields.icon = icon;
+  if (image !== undefined) updateFields.image = image;
   if (isActive !== undefined) updateFields.isActive = isActive;
   if (estimatedDuration !== undefined) updateFields.estimatedDuration = estimatedDuration;
   if (requirements !== undefined) updateFields.requirements = requirements;
 
+  const existingService = await Service.findById(req.params.id);
+  if (!existingService) {
+    return res.status(404).json({ success: false, message: 'Service not found.' });
+  }
+  const previousCategory = existingService.category;
+
   const service = await Service.findByIdAndUpdate(req.params.id, updateFields, { new: true, runValidators: true });
   if (!service) {
     return res.status(404).json({ success: false, message: 'Service not found.' });
+  }
+
+  if (updateFields.category && updateFields.category !== previousCategory) {
+    await Promise.all([
+      Worker.updateMany(
+        { primaryServiceCategory: previousCategory, isDeleted: false },
+        { $set: { primaryServiceCategory: updateFields.category } },
+      ),
+      Worker.updateMany(
+        { serviceCategories: previousCategory, isDeleted: false },
+        { $set: { 'serviceCategories.$[elem]': updateFields.category } },
+        { arrayFilters: [{ elem: previousCategory }] },
+      ),
+      Worker.updateMany(
+        { 'services.serviceCategory': previousCategory, isDeleted: false },
+        { $set: { 'services.$[elem].serviceCategory': updateFields.category } },
+        { arrayFilters: [{ 'elem.serviceCategory': previousCategory }] },
+      ),
+    ]);
+    emitRefresh('workers');
   }
 
   emitRefresh('services');
