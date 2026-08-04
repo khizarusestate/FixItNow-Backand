@@ -55,6 +55,7 @@ import {
   normalizeWorkerStatusInput,
 } from '../utils/userStatus.js';
 import { CUSTOMER_STATUS, WORKER_STATUS } from '../utils/constants.js';
+import { resolveWorkerServiceFields, applyWorkerServices } from '../utils/workerServiceFields.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1658,6 +1659,9 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
   if (!fullName || !email || !phoneNumber || !primaryServiceCategory || !password || !cnicClean) {
     return res.status(400).json({ success: false, message: 'Full name, email, phone, service category, password, and CNIC are required.' });
   }
+  if (!/^\d{13}$/.test(cnicClean)) {
+    return res.status(400).json({ success: false, message: 'CNIC must be 13 digits.' });
+  }
 
   // Check if worker already exists (schema field is `email`, not `emailAddress`)
   const existingWorker = await Worker.findOne({ email, isDeleted: false });
@@ -1670,11 +1674,11 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   const locLabel = (req.body.location || serviceArea || '').trim();
-  const worker = await Worker.create({
+  const resolvedService = await resolveWorkerServiceFields({ primaryServiceCategory });
+  const worker = new Worker({
     fullName,
     email,
     phoneNumber,
-    primaryServiceCategory,
     location: locLabel,
     serviceArea: locLabel,
     latitude: req.body.latitude != null ? Number(req.body.latitude) : null,
@@ -1695,10 +1699,19 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     authProvider: 'local',
     signupStep: 'complete',
   });
+  applyWorkerServices(worker, [
+    {
+      serviceId: resolvedService.primaryServiceId,
+      serviceName: resolvedService.primaryServiceName,
+      serviceCategory: resolvedService.primaryServiceCategory,
+    },
+  ]);
+  await worker.save();
 
   emitRefresh('workers');
   emitNotification('workers', 'created', `New worker joined: ${worker.fullName}`);
   emitWorkerProfileUpdate(worker);
+  emailService.sendWorkerAccountCreated(worker, password).catch(() => {});
   return res.status(201).json({ success: true, message: 'Worker created successfully.', data: sanitizeWorker(worker) });
 }));
 
@@ -1735,7 +1748,17 @@ router.put('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (primaryServiceCategory !== undefined) updateFields.primaryServiceCategory = primaryServiceCategory;
   applyLocationUpdate(updateFields, req.body);
   if (status !== undefined) updateFields.status = status;
-  if (cnicNumber !== undefined) updateFields.cnicNumber = cnicNumber;
+  if (cnicNumber !== undefined) {
+    const cnicClean = String(cnicNumber).replace(/-/g, '').trim();
+    if (!/^\d{13}$/.test(cnicClean)) {
+      return res.status(400).json({ success: false, message: 'CNIC must be 13 digits.' });
+    }
+    const duplicateCnic = await Worker.findOne({ cnicNumber: cnicClean, isDeleted: false, _id: { $ne: req.params.id } });
+    if (duplicateCnic) {
+      return res.status(409).json({ success: false, message: 'This CNIC is already registered to another worker.' });
+    }
+    updateFields.cnicNumber = cnicClean;
+  }
   if (profilePicture !== undefined) updateFields.profilePicture = profilePicture;
   if (availability !== undefined) updateFields.availability = availability;
   if (password) updateFields.password = password;
@@ -1746,6 +1769,16 @@ router.put('/workers/:id', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   Object.assign(worker, updateFields);
+  if (primaryServiceCategory !== undefined) {
+    const resolvedService = await resolveWorkerServiceFields({ primaryServiceCategory });
+    applyWorkerServices(worker, [
+      {
+        serviceId: resolvedService.primaryServiceId,
+        serviceName: resolvedService.primaryServiceName,
+        serviceCategory: resolvedService.primaryServiceCategory,
+      },
+    ]);
+  }
   await worker.save();
 
   emitRefresh('workers');

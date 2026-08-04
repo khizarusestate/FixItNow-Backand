@@ -65,6 +65,23 @@ export const emailService = {
     });
   },
 
+  /** Worker account created directly by an admin (not self-signup) */
+  async sendWorkerAccountCreated(worker, plainPassword) {
+    const html = `
+      <p>Hi ${worker.fullName || "there"},</p>
+      <p>An account has been created for you on Fix It Now as a worker.</p>
+      <p><strong>Email:</strong> ${worker.email}<br/>
+      <strong>Temporary password:</strong> ${plainPassword}</p>
+      <p>Please log in and change your password as soon as possible.</p>
+      <p>If you weren't expecting this, please contact support.</p>
+    `;
+    return sendPlainEmail(
+      worker.email,
+      "Fix It Now — your worker account is ready",
+      html,
+    );
+  },
+
   /** Worker account approved by admin */
   async sendWorkerApproval(worker) {
     return sendTemplatedEmail(
