@@ -22,6 +22,7 @@ import Review from '../reviewSchema.js';
 import Notification from '../notificationSchema.js';
 import PlatformSettings from '../models/PlatformSettings.js';
 import Service from '../models/Service.js';
+import ServiceRequest from '../models/ServiceRequest.js';
 import { createToken, createRefreshToken } from '../utils/jwt.js';
 import env from '../utils/env.js';
 import mongoose from 'mongoose';
@@ -2443,6 +2444,158 @@ router.delete('/services/:id', requireAdmin, asyncHandler(async (req, res) => {
   });
 
   return res.json({ success: true, message: 'Service deleted successfully.' });
+}));
+
+// ─── GET /api/admin/service-requests ─────────────────────────────────────────
+// Workers' requests for new service types, awaiting admin review.
+router.get('/service-requests', requireAdmin, asyncHandler(async (req, res) => {
+  const { status = 'pending', page = 1, limit = 20 } = req.query;
+
+  const query = { isDeleted: false };
+  if (status && status !== 'all') {
+    query.status = status;
+  }
+
+  const skip = (Number(page) - 1) * Number(limit);
+  const [requests, total, pendingCount] = await Promise.all([
+    ServiceRequest.find(query)
+      .populate('workerId', 'fullName phoneNumber email primaryServiceCategory')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .lean(),
+    ServiceRequest.countDocuments(query),
+    ServiceRequest.countDocuments({ status: 'pending', isDeleted: false }),
+  ]);
+
+  return res.json({
+    success: true,
+    data: requests,
+    pendingCount,
+    pagination: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+      totalPages: Math.max(1, Math.ceil(total / Number(limit))),
+    },
+  });
+}));
+
+// ─── POST /api/admin/service-requests/:id/approve ────────────────────────────
+router.post('/service-requests/:id/approve', requireAdmin, asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid request ID.' });
+  }
+
+  const serviceRequest = await ServiceRequest.findOne({ _id: req.params.id, isDeleted: false });
+  if (!serviceRequest) {
+    return res.status(404).json({ success: false, message: 'Service request not found.' });
+  }
+  if (serviceRequest.status !== 'pending') {
+    return res.status(400).json({
+      success: false,
+      message: `This request is already ${serviceRequest.status}.`,
+    });
+  }
+
+  // Re-check for a name collision — another admin, or the same worker via a
+  // different request, could have created a matching service in the meantime.
+  const existingService = await Service.findOne({
+    name: { $regex: `^${serviceRequest.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+  });
+  if (existingService) {
+    return res.status(409).json({
+      success: false,
+      message: 'A service with this name already exists — reject this request instead.',
+    });
+  }
+
+  const service = await Service.create({
+    name: serviceRequest.name,
+    description: serviceRequest.description,
+    category: serviceRequest.category,
+    icon: serviceRequest.icon || 'Wrench',
+    image: serviceRequest.image || null,
+    price: serviceRequest.price || 0,
+    isActive: true,
+    estimatedDuration: serviceRequest.estimatedDuration || null,
+    requirements: serviceRequest.requirements || [],
+  });
+
+  serviceRequest.status = 'approved';
+  serviceRequest.reviewedBy = req.admin.id;
+  serviceRequest.reviewedAt = new Date();
+  serviceRequest.createdServiceId = service._id;
+  await serviceRequest.save();
+
+  emitRefresh('services');
+  emitRefresh('service-requests');
+  cacheDelByPrefix('fixitnow:public:services').catch(() => {});
+  cacheDelByPrefix('fixitnow:public:categories').catch(() => {});
+
+  await logAudit(req, 'service_request_approve', 'service_request', serviceRequest._id, {
+    name: serviceRequest.name,
+    createdServiceId: service._id,
+  });
+
+  createNotification({
+    userId: serviceRequest.workerId,
+    userRole: 'worker',
+    title: 'Service request approved',
+    message: `Your request for "${serviceRequest.name}" was approved and is now live.`,
+    type: 'success',
+  }).catch(() => {});
+
+  return res.json({
+    success: true,
+    message: 'Service request approved and added to the catalog.',
+    data: { serviceRequest, service },
+  });
+}));
+
+// ─── POST /api/admin/service-requests/:id/reject ─────────────────────────────
+router.post('/service-requests/:id/reject', requireAdmin, asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid request ID.' });
+  }
+
+  const { reason } = req.body;
+
+  const serviceRequest = await ServiceRequest.findOne({ _id: req.params.id, isDeleted: false });
+  if (!serviceRequest) {
+    return res.status(404).json({ success: false, message: 'Service request not found.' });
+  }
+  if (serviceRequest.status !== 'pending') {
+    return res.status(400).json({
+      success: false,
+      message: `This request is already ${serviceRequest.status}.`,
+    });
+  }
+
+  serviceRequest.status = 'rejected';
+  serviceRequest.rejectionReason = String(reason || '').trim();
+  serviceRequest.reviewedBy = req.admin.id;
+  serviceRequest.reviewedAt = new Date();
+  await serviceRequest.save();
+
+  emitRefresh('service-requests');
+
+  await logAudit(req, 'service_request_reject', 'service_request', serviceRequest._id, {
+    name: serviceRequest.name,
+    reason: serviceRequest.rejectionReason,
+  });
+
+  createNotification({
+    userId: serviceRequest.workerId,
+    userRole: 'worker',
+    title: 'Service request rejected',
+    message: serviceRequest.rejectionReason
+      ? `Your request for "${serviceRequest.name}" wasn't approved: ${serviceRequest.rejectionReason}`
+      : `Your request for "${serviceRequest.name}" wasn't approved.`,
+    type: 'warning',
+  }).catch(() => {});
+
+  return res.json({ success: true, message: 'Service request rejected.', data: serviceRequest });
 }));
 
 // ─── POST /api/admin/worker-job-complete ───────────────────────────────────────

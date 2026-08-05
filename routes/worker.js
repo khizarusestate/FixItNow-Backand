@@ -18,6 +18,9 @@ import { applyLocationUpdate, formatLocationResponse, getLocationLabel } from '.
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
 import { normalizeCnic } from '../utils/cnic.js';
 import { resolveWorkerServiceFields, resolveWorkerServicesArray, applyWorkerServices } from '../utils/workerServiceFields.js';
+import ServiceRequest from '../models/ServiceRequest.js';
+import Service from '../models/Service.js';
+import { notifyAllAdmins } from '../utils/createNotification.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,6 +65,15 @@ const upload = multer({
 
 const emitAdminRefresh = (type) => {
   emitToAdmin('refresh', { type, timestamp: new Date().toISOString() });
+};
+
+const emitAdminNotification = (type, action, message) => {
+  emitToAdmin('notification', {
+    type,
+    action,
+    message,
+    timestamp: new Date().toISOString(),
+  });
 };
 
 const toWorkerProfilePayload = (worker) => {
@@ -551,6 +563,105 @@ router.delete('/profile-picture', requireWorker, asyncHandler(async (req, res) =
     message: 'Profile picture removed successfully.',
     data: payload
   });
+}));
+
+// ─── POST /api/worker/service-requests ────────────────────────────────────────
+// A worker who can't find their trade in the existing service list can request
+// a brand-new service type. Goes to admin for review before it becomes a real,
+// bookable Service.
+router.post('/service-requests', requireWorker, asyncHandler(async (req, res) => {
+  const {
+    name,
+    description,
+    category,
+    price,
+    icon,
+    image,
+    estimatedDuration,
+    requirements,
+  } = req.body;
+
+  const nameStr = String(name || '').trim();
+  const descriptionStr = String(description || '').trim();
+  const categoryStr = String(category || '').trim();
+
+  if (!nameStr || !descriptionStr || !categoryStr) {
+    return res.status(400).json({
+      success: false,
+      message: 'Service name, description, and category are required.',
+    });
+  }
+
+  // Don't let workers request something that's already a live service.
+  const existingService = await Service.findOne({
+    name: { $regex: `^${nameStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+  });
+  if (existingService) {
+    return res.status(409).json({
+      success: false,
+      message: 'This service already exists in the catalog.',
+    });
+  }
+
+  // Don't let the same worker spam duplicate pending requests for the same name.
+  const existingRequest = await ServiceRequest.findOne({
+    name: { $regex: `^${nameStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+    status: 'pending',
+    isDeleted: false,
+  });
+  if (existingRequest) {
+    return res.status(409).json({
+      success: false,
+      message: 'A request for this service is already pending review.',
+    });
+  }
+
+  const requirementsArr = Array.isArray(requirements)
+    ? requirements.map((r) => String(r).trim()).filter(Boolean)
+    : [];
+
+  const serviceRequest = await ServiceRequest.create({
+    workerId: req.worker.id,
+    name: nameStr,
+    description: descriptionStr,
+    category: categoryStr,
+    price: Number(price) || 0,
+    icon: String(icon || 'Wrench').trim(),
+    image: image ? String(image).trim() : null,
+    estimatedDuration: estimatedDuration ? String(estimatedDuration).trim() : null,
+    requirements: requirementsArr,
+  });
+
+  const worker = await Worker.findById(req.worker.id).select('fullName').lean();
+
+  emitAdminRefresh('service-requests');
+  emitAdminNotification(
+    'service-requests',
+    'created',
+    `${worker?.fullName || 'A worker'} requested a new service: ${nameStr}`,
+  );
+  notifyAllAdmins({
+    title: 'New service request',
+    message: `${worker?.fullName || 'A worker'} requested a new service type: ${nameStr}`,
+    type: 'info',
+    relatedEntityId: serviceRequest._id,
+  }).catch(() => {});
+
+  return res.status(201).json({
+    success: true,
+    message: 'Your request has been submitted for admin review.',
+    data: serviceRequest,
+  });
+}));
+
+// ─── GET /api/worker/service-requests ─────────────────────────────────────────
+// A worker's own request history, so they can see the status of what they submitted.
+router.get('/service-requests', requireWorker, asyncHandler(async (req, res) => {
+  const requests = await ServiceRequest.find({ workerId: req.worker.id, isDeleted: false })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return res.json({ success: true, data: requests });
 }));
 
 export default router;
