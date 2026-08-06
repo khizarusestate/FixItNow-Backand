@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireAdmin, requireSuperAdmin } from '../middleware/auth.js';
 import { validateAdminLogin } from '../middleware/validation.js';
 import Admin from '../models/Admin.js';
 import { ADMIN_PANEL_ROLES } from '../middleware/adminRoles.js';
@@ -412,9 +412,12 @@ router.get('/summary', requireAdmin, asyncHandler(async (req, res) => {
     };
   });
 
+  const isSuperAdmin = req.admin?.role === 'super_admin';
+  const responseData = isSuperAdmin ? value : { ...value, revenue: undefined };
+
   return res.json({
     success: true,
-    data: value,
+    data: responseData,
   });
 }));
 
@@ -2611,7 +2614,7 @@ router.post('/worker-job-complete', requireAdmin, asyncHandler(async (req, res) 
 
 // ─── GET /api/admin/revenue-data ─────────────────────────────────────────────────
 // Get real revenue data from database
-router.get('/revenue-data', requireAdmin, asyncHandler(async (req, res) => {
+router.get('/revenue-data', requireSuperAdmin, asyncHandler(async (req, res) => {
   try {
     // Get all completed bookings
     const completedBookings = await Booking.find({ 
