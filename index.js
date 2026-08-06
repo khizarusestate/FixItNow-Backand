@@ -56,8 +56,7 @@ import { ensureSuperAdminActive } from "./utils/ensureSuperAdminActive.js";
 import { initCache, closeCache } from "./utils/cache.js";
 import emailService from "./services/emailService.js";
 import { startEmailWorker } from "./utils/emailQueue.js";
-import NotificationManager from "./utils/notificationManager.js";
-import { initNotificationService, processRetryQueue } from "./services/notificationService.js";
+import { initNotificationService } from "./services/notificationService.js";
 
 import {
   initializeSocketIO,
@@ -174,18 +173,8 @@ const io = new Server(httpServer, {
 
 initializeSocketIO(io);
 
-// Initialize NotificationManager for push notifications with fallback system
-const notificationManager = new NotificationManager(io, null, { Worker, Customer, Notification: null });
-
 // Initialize Notification Service Layer
-initNotificationService(io, null, { Worker, Customer, Notification: null });
-
-// Process retry queue every 10 seconds
-setInterval(async () => {
-  await notificationManager.processRetryQueue();
-  await processRetryQueue();
-  notificationManager.logStatus();
-}, 10000);
+initNotificationService();
 
 io.on("connection", (socket) => {
   logger.info("Client connected", {
@@ -234,7 +223,7 @@ io.on("connection", (socket) => {
           _id: userId,
           isDeleted: { $ne: true },
         })
-          .select("isDisabled status")
+          .select("isDisabled status approvalStatus")
           .lean();
         if (!worker) {
           return socket.emit("error", { message: "Worker account not found" });
@@ -245,7 +234,7 @@ io.on("connection", (socket) => {
             code: "WORKER_DISABLED",
           });
         }
-        if (worker.status === "rejected") {
+        if (worker.status === "rejected" || worker.approvalStatus === "rejected") {
           return socket.emit("error", {
             message: "Worker account rejected",
             code: "WORKER_REJECTED",
@@ -275,14 +264,17 @@ io.on("connection", (socket) => {
         }
       }
 
-      setUserSocket(userId, socket.id);
+      const becameOnline = setUserSocket(userId, socket.id);
       socket.userId = userId;
       socket.userRole = decoded.role;
+      socket.join(`user:${userId}`);
 
       if (decoded.role === "worker") {
         socket.join("workers-room");
       }
-      setUserPresenceOnline(userId, decoded.role);
+      if (becameOnline) {
+        setUserPresenceOnline(userId, decoded.role);
+      }
       logger.info("User joined", { userId, role: decoded.role });
     } catch {
       socket.emit("error", { message: "Invalid token" });
@@ -292,8 +284,8 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     if (socket.userId) {
       const role = socket.userRole;
-      removeUserSocket(socket.userId);
-      if (role === "customer" || role === "worker") {
+      const becameOffline = removeUserSocket(socket.userId, socket.id);
+      if (becameOffline && (role === "customer" || role === "worker")) {
         setUserPresenceOffline(socket.userId, role);
       }
     }

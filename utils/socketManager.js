@@ -1,7 +1,7 @@
 import logger from "./logger.js";
 
 let io = null;
-let userSockets = new Map();
+let userSockets = new Map(); // userId -> Set<socketId>
 let adminSockets = new Map();
 
 export function initializeSocketIO(socketIOInstance) {
@@ -43,35 +43,51 @@ export function getSocketIO() {
   return io;
 }
 
+/** Returns one connected socket id for this user, if any (arbitrary tab if several). */
 export function getUserSocket(userId) {
-  // Always normalize to string for consistent lookups
-  return userSockets.get(String(userId));
+  const sockets = userSockets.get(String(userId));
+  if (!sockets || sockets.size === 0) return undefined;
+  return sockets.values().next().value;
 }
 
 export function isUserConnected(userId) {
-  return userSockets.has(String(userId));
+  const sockets = userSockets.get(String(userId));
+  return Boolean(sockets && sockets.size > 0);
 }
 
+/** Returns true if this is the user's first connected tab/device (0 -> 1). */
 export function setUserSocket(userId, socketId) {
-  // Always normalize to string for consistent storage
-  userSockets.set(String(userId), socketId);
+  const normalizedUserId = String(userId);
+  const existing = userSockets.get(normalizedUserId) || new Set();
+  const becameOnline = existing.size === 0;
+  existing.add(socketId);
+  userSockets.set(normalizedUserId, existing);
+  return becameOnline;
 }
 
-export function removeUserSocket(userId) {
-  // Always normalize to string for consistent removal
-  userSockets.delete(String(userId));
+/** Returns true if this was the user's last connected tab/device (1 -> 0). */
+export function removeUserSocket(userId, socketId) {
+  const normalizedUserId = String(userId);
+  const sockets = userSockets.get(normalizedUserId);
+  if (!sockets) return false;
+  if (socketId) sockets.delete(socketId);
+  if (sockets.size === 0) {
+    userSockets.delete(normalizedUserId);
+    return true;
+  }
+  userSockets.set(normalizedUserId, sockets);
+  return false;
 }
 
 export function emitToUser(userId, event, data) {
-  // Always normalize to string for consistent lookups
+  // Broadcasts to every tab/device this user has open (Socket.IO room),
+  // not just whichever one connected last.
   const normalizedUserId = String(userId);
-  const socketId = userSockets.get(normalizedUserId);
-  if (socketId && io) {
-    io.to(socketId).emit(event, data);
+  if (io && isUserConnected(normalizedUserId)) {
+    io.to(`user:${normalizedUserId}`).emit(event, data);
     logger.debug("Socket emit to user", {
       userId: normalizedUserId,
       event,
-      socketId,
     });
     return true;
   }
