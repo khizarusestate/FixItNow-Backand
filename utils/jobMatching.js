@@ -411,7 +411,6 @@ export function getUrgencyScore(createdAt) {
 export function wouldDemoteJob(worker, booking, options = {}) {
   const maxRadiusKm = options.maxRadiusKm ?? DEFAULT_MAX_RADIUS_KM;
   const service = getServiceMatchScore(worker, booking);
-  if (service.exactService || service.sameCategory) return false;
   if (service.score === 0) return true;
 
   const workerCoords = getCoords(worker);

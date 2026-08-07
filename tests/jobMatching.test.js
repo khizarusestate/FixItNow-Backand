@@ -9,6 +9,7 @@ import {
 describe('jobMatching', () => {
   const worker = {
     primaryServiceCategory: 'Plumbing',
+    primaryServiceName: 'Pipe fix',
     serviceCategories: ['Electrical'],
     latitude: 32.1617,
     longitude: 74.1883,

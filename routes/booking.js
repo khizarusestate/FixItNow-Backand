@@ -709,7 +709,7 @@ router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
     newRating = result.newRating;
     finalized = true;
   } else {
-    if (booking.status === 'assigned') {
+    if (booking.status === 'worker-assigned') {
       booking.status = 'in-progress';
     }
     await booking.save();

@@ -81,12 +81,12 @@ function getCustomerCancelBlock(status, serviceTitle) {
       message: `This booking ${serviceTitle} is already completed.`,
       status: 409,
     }),
-    approved: blockPayload({
-      code: ERROR_CODES.BOOKING_ALREADY_APPROVED,
-      message: `The booking ${serviceTitle} has already been approved by the admin. Please refresh your page — it may no longer be cancellable.`,
+    "claim-pending": blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_CANCELLABLE,
+      message: `A worker has already submitted a claim for ${serviceTitle} and it's awaiting admin review. Please contact support if you need to cancel it.`,
       status: 409,
     }),
-    assigned: blockPayload({
+    "worker-assigned": blockPayload({
       code: ERROR_CODES.BOOKING_WORKER_ASSIGNED,
       message: `A worker has already been assigned to ${serviceTitle}. You cannot cancel it from here. Contact support if you need help.`,
       status: 409,
@@ -94,11 +94,6 @@ function getCustomerCancelBlock(status, serviceTitle) {
     "in-progress": blockPayload({
       code: ERROR_CODES.BOOKING_IN_PROGRESS,
       message: `Work on ${serviceTitle} is already in progress. Cancellation is not available.`,
-      status: 409,
-    }),
-    "pending-confirmation": blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_CANCELLABLE,
-      message: `${serviceTitle} is awaiting confirmation and cannot be cancelled online.`,
       status: 409,
     }),
   };
