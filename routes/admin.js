@@ -2513,13 +2513,21 @@ router.post('/service-requests/:id/approve', requireAdmin, asyncHandler(async (r
     });
   }
 
+  const finalPrice = req.body?.price != null ? Number(req.body.price) : (serviceRequest.price || 0);
+  if (!finalPrice || finalPrice <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'This service needs a price greater than 0 before it can go live — bookings require a set price. Provide one to approve.',
+    });
+  }
+
   const service = await Service.create({
     name: serviceRequest.name,
     description: serviceRequest.description,
     category: serviceRequest.category,
     icon: serviceRequest.icon || 'Wrench',
     image: serviceRequest.image || null,
-    price: serviceRequest.price || 0,
+    price: finalPrice,
     isActive: true,
     estimatedDuration: serviceRequest.estimatedDuration || null,
     requirements: serviceRequest.requirements || [],
