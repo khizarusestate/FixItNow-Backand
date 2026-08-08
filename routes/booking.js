@@ -298,12 +298,6 @@ router.post('/',
       notifyAdmin('bookings', 'created', `New booking: ${booking.serviceTitle} by ${booking.customerName}`);
       refreshAdmin('bookings');
 
-      notifyAllAdmins({
-        title: 'New booking',
-        message: `${booking.customerName} booked ${booking.serviceTitle}.`,
-        type: 'booking',
-      }).catch(() => { });
-
       // Send notifications via notification service
       notifyAdminNewBooking(booking).catch(() => { });
       if (customer) {

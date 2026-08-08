@@ -400,12 +400,6 @@ router.post(
     await customer.save();
 
     // Notify admin about new verified customer
-    notifyAllAdmins({
-      title: "New customer verified",
-      message: `${customer.fullName} verified their email and is now active.`,
-      type: "success",
-      relatedEntityId: customer._id,
-    }).catch(() => {});
     notifyAdminNewCustomer(customer).catch(() => {});
 
     const tokenPayload = {
@@ -1240,13 +1234,6 @@ router.post(
       `New worker pending approval: ${worker.fullName}`,
     );
     
-    notifyAllAdmins({
-      title: "New worker application pending approval",
-      message: `${worker.fullName} registered and is waiting for account approval.`,
-      type: "info",
-      relatedEntityId: worker._id,
-    }).catch(() => {});
-
     notifyAdminNewWorker(worker).catch(() => {});
 
     return res.status(201).json({

@@ -665,17 +665,8 @@ router.patch(
       await booking.save();
 
       if (rejectedWorkerId) {
-        createNotification({
-          userId: rejectedWorkerId,
-          userRole: 'worker',
-          title: 'Claim rejected',
-          message: `Your claim for ${booking.serviceTitle} was rejected. The job is open again.`,
-          type: 'warning',
-        }).catch(() => {});
-        
-        // Send notification via notification service
         notifyWorkerClaimRejected(rejectedWorkerId, booking, reason).catch(() => {});
-        
+
         emitToUser(String(rejectedWorkerId), 'booking-status-update', {
           bookingId: booking._id,
           status: booking.status,
@@ -722,17 +713,8 @@ router.patch(
         $inc: { totalJobs: 1, assignedJobs: 1 },
         lastActive: new Date(),
       });
-      createNotification({
-        userId: booking.workerId,
-        userRole: 'worker',
-        title: 'Claim approved',
-        message: `You are assigned to ${booking.serviceTitle}. Full customer details are now visible.`,
-        type: 'success',
-      }).catch(() => {});
-      
-      // Send notification via notification service
       notifyWorkerClaimApproved(booking.workerId, booking).catch(() => {});
-      
+
       emitToUser(String(booking.workerId), 'job-assigned', {
         bookingId: booking._id,
         serviceTitle: booking.serviceTitle,
@@ -747,15 +729,6 @@ router.patch(
     }
 
     if (booking.customerId) {
-      createNotification({
-        userId: booking.customerId,
-        userRole: 'customer',
-        title: 'Worker assigned',
-        message: `A worker has been assigned to ${booking.serviceTitle}.`,
-        type: 'success',
-      }).catch(() => {});
-      
-      // Send notification via notification service
       notifyCustomerWorkerAssigned(booking.customerId, booking, worker).catch(() => {});
     }
 
