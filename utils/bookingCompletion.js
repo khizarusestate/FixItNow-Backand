@@ -3,12 +3,13 @@ import Booking from "../bookingSchema.js";
 import Worker from "../workerSchema.js";
 import Customer from "../customerSchema.js";
 import logger from "./logger.js";
+import { COMMISSION_RATE } from "./bookingCommission.js";
 
 /**
  * Apply earnings, rating, and completed status when both parties marked done.
  */
 export async function finalizeBookingCompletion(booking, worker, customerId) {
-  const serviceFee = Math.round(booking.price * 0.2);
+  const serviceFee = Math.round(booking.price * COMMISSION_RATE);
   const workerEarnings = booking.price - serviceFee;
   const rating = booking.customerRating;
 

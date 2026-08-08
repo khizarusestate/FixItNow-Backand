@@ -341,7 +341,7 @@ router.post(
           timeline: {
             status: BOOKING_STATUS.CLAIM_PENDING,
             timestamp: new Date(),
-            note: `Job claimed by worker ${worker.fullName}. Pending admin approval. Service fee (15%): ₨${commissionAmount}. Worker earnings: ₨${workerEarnings}`,
+            note: `Job claimed by worker ${worker.fullName}. Pending admin approval. Service fee (20%): ₨${commissionAmount}. Worker earnings: ₨${workerEarnings}`,
           },
         },
       },
