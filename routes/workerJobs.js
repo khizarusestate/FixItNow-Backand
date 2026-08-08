@@ -117,7 +117,7 @@ router.get(
       isDeleted: false,
     })
       .select(
-        "primaryServiceCategory primaryServiceName primaryServiceId services serviceCategories location serviceArea address latitude longitude status availability",
+        "primaryServiceCategory primaryServiceName primaryServiceId services serviceCategories location serviceArea latitude longitude status availability",
       )
       .lean();
 
@@ -127,11 +127,7 @@ router.get(
         .json({ success: false, message: "Worker not found." });
     }
 
-    if (
-      worker.status !== "approved" &&
-      worker.status !== "active" &&
-      worker.status !== "inactive"
-    ) {
+    if (worker.status !== "active" && worker.status !== "inactive") {
       return res.status(403).json({
         success: false,
         message: "Your account must be approved by admin to view jobs.",
@@ -393,21 +389,6 @@ router.post(
   }),
 );
 
-// ─── POST /api/worker-jobs/confirm-bank ───────────────────────────────────────────
-// DEPRECATED: This endpoint references non-existent bankAccount field in worker schema
-// Use /api/worker-jobs/claim endpoint instead
-router.post(
-  "/confirm-bank",
-  requireWorker,
-  asyncHandler(async (req, res) => {
-    return res.status(410).json({
-      success: false,
-      message:
-        "This endpoint is deprecated. Please use /api/worker-jobs/claim to accept jobs.",
-    });
-  }),
-);
-
 // ─── GET /api/worker-jobs/my-jobs ─────────────────────────────────────────────
 // Get bookings assigned to this worker
 router.get(
@@ -422,9 +403,8 @@ router.get(
           status: {
             $in: [
               BOOKING_STATUS.WORKER_ASSIGNED,
-              "assigned",
-              "in-progress",
-              "completed",
+              BOOKING_STATUS.IN_PROGRESS,
+              BOOKING_STATUS.COMPLETED,
             ],
           },
         },
@@ -523,7 +503,7 @@ router.post(
           "Customer marked done but has not submitted a rating yet. Ask them to rate the job in My Bookings.",
       });
     } else {
-      if (booking.status === "assigned") {
+      if (booking.status === "worker-assigned") {
         booking.status = "in-progress";
       }
       await booking.save();

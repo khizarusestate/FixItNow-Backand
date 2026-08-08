@@ -285,7 +285,7 @@ router.patch('/availability', requireWorker, asyncHandler(async (req, res) => {
   if (availability === false) {
     const activeJobsCount = await Booking.countDocuments({
       workerId: req.worker.id,
-      status: { $in: ['assigned', 'in-progress'] },
+      status: { $in: ['worker-assigned', 'in-progress'] },
       isDeleted: false
     });
 
@@ -345,7 +345,7 @@ router.patch('/jobs/:id/status', requireWorker, asyncHandler(async (req, res) =>
 
   // Role-based status transitions: Worker can only move to in-progress
   // Only customer can mark job as completed with rating
-  if (status === 'in-progress' && !['assigned'].includes(booking.status)) {
+  if (status === 'in-progress' && booking.status !== 'worker-assigned') {
     return res.status(400).json({ success: false, message: 'Booking must be assigned before starting work.' });
   }
 
@@ -442,7 +442,7 @@ router.get('/dashboard', requireWorker, asyncHandler(async (req, res) => {
 
   // Get booking statistics
   const [assignedBookings, activeBookings, completedBookings, totalEarnings] = await Promise.all([
-    Booking.countDocuments({ workerId: req.worker.id, status: 'assigned', isDeleted: false }),
+    Booking.countDocuments({ workerId: req.worker.id, status: 'worker-assigned', isDeleted: false }),
     Booking.countDocuments({ workerId: req.worker.id, status: 'in-progress', isDeleted: false }),
     Booking.countDocuments({ workerId: req.worker.id, status: 'completed', isDeleted: false }),
     Worker.findById(req.worker.id).select('totalEarnings')

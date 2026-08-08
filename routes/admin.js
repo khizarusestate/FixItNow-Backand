@@ -466,7 +466,7 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
 
   if (status) {
     if (status === 'worker-assigned') {
-      query.status = { $in: ['worker-assigned', 'assigned', 'in-progress'] };
+      query.status = { $in: ['worker-assigned', 'in-progress'] };
     } else if (status === 'pending') {
       query.status = { $in: ['pending', 'claim-pending'] };
     } else if (status === 'cancelled') {
@@ -1035,7 +1035,7 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
   if (!booking) {
     return res.status(404).json({ success: false, message: 'Booking not found.' });
   }
-  if (worker.status !== 'approved' && worker.status !== 'active' && worker.status !== 'inactive') {
+  if (worker.status !== 'active' && worker.status !== 'inactive') {
     return res.status(400).json({ success: false, message: 'Worker is not approved/active.' });
   }
 
@@ -1053,11 +1053,11 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
     { _id: req.params.id, isDeleted: false },
     { 
       workerId, 
-      status: 'assigned',
+      status: 'worker-assigned',
       assignedAt: new Date(),
       $push: {
         timeline: {
-          status: 'assigned',
+          status: 'worker-assigned',
           timestamp: new Date(),
           note: `Assigned to worker: ${worker.fullName}`
         }
@@ -1948,10 +1948,10 @@ router.patch('/bookings/:id/auto-assign', requireAdmin, asyncHandler(async (req,
     return res.status(404).json({ success: false, message: 'Booking not found.' });
   }
 
-  if (!['approved', 'pending'].includes(booking.status)) {
+  if (booking.status !== 'pending') {
     return res.status(400).json({
       success: false,
-      message: 'Auto-assign is only available for approved (or pending) bookings without a worker.',
+      message: 'Auto-assign is only available for pending bookings without a worker.',
     });
   }
 
@@ -1979,11 +1979,11 @@ router.patch('/bookings/:id/auto-assign', requireAdmin, asyncHandler(async (req,
     { _id: booking._id, isDeleted: false },
     {
       workerId: best._id,
-      status: 'assigned',
+      status: 'worker-assigned',
       assignedAt: new Date(),
       $push: {
         timeline: {
-          status: 'assigned',
+          status: 'worker-assigned',
           timestamp: new Date(),
           note: `Auto-assigned to ${worker.fullName} (score ${best.rankingScore})`,
         },
