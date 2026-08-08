@@ -137,10 +137,9 @@ const customerSchema = new mongoose.Schema({
 // Update the updatedAt field before saving
 customerSchema.pre("save", async function (next) {
   this.updatedAt = Date.now();
-  const label = (this.location || this.address || "").trim();
+  const label = (this.location || "").trim();
   if (label) {
     this.location = label;
-    this.address = label;
   }
   if (this.isModified("password") && this.password) {
     this.password = await bcrypt.hash(this.password, 12);

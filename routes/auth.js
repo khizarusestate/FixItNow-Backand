@@ -1004,7 +1004,31 @@ router.put(
 
     const updateFields = {};
     if (fullName !== undefined) updateFields.fullName = fullName;
-    if (email !== undefined) updateFields.email = email;
+    if (email !== undefined) {
+      const normalizedEmail = String(email).toLowerCase().trim();
+      const existingCustomer = await Customer.findOne({
+        email: normalizedEmail,
+        _id: { $ne: req.customer.id },
+        isDeleted: false,
+      });
+      if (existingCustomer) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already registered to another customer account.",
+        });
+      }
+      const existingWorker = await Worker.findOne({
+        email: normalizedEmail,
+        isDeleted: false,
+      });
+      if (existingWorker) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already registered as a worker account.",
+        });
+      }
+      updateFields.email = normalizedEmail;
+    }
     if (phone !== undefined) updateFields.phone = phone;
     applyLocationUpdate(updateFields, req.body);
     if (profilePicture !== undefined) {
