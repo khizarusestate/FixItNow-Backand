@@ -67,7 +67,7 @@ router.get(
 
     const query = {
       isDeleted: false,
-      status: { $in: ['approved', 'pending'] },
+      status: 'approved',
       expiresAt: { $gt: new Date() },
     };
 
@@ -76,7 +76,7 @@ router.get(
     }
 
     const advertisements = await Advertisement.find(query)
-      .populate('workerId', 'name phoneNumber profilePicture')
+      .populate('workerId', 'fullName phoneNumber profilePicture')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -116,7 +116,7 @@ router.get(
     }
 
     const advertisements = await Advertisement.find(query)
-      .populate('workerId', 'name phoneNumber profilePicture')
+      .populate('workerId', 'fullName phoneNumber profilePicture')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
