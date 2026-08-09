@@ -3,7 +3,6 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireCustomer, requireAdmin, optionalAuth } from '../middleware/auth.js';
 import Review from '../reviewSchema.js';
 import Booking from '../bookingSchema.js';
-import Worker from '../workerSchema.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { notifyAdminNewReview } from '../services/notificationService.js';
@@ -52,15 +51,11 @@ router.post('/', requireCustomer, asyncHandler(async (req, res) => {
     comment: comment || ''
   });
 
-  // Update worker rating (weighted average)
-  const workerReviews = await Review.find({ workerId: booking.workerId });
-  const totalRating = workerReviews.reduce((sum, r) => sum + r.rating, 0);
-  const avgRating = totalRating / workerReviews.length;
-
-  await Worker.findByIdAndUpdate(booking.workerId, {
-    rating: Math.round(avgRating * 100) / 100,
-    totalReviews: workerReviews.length
-  });
+  // NOTE: worker.rating/totalReviews are NOT recalculated here. They're already
+  // maintained incrementally by finalizeBookingCompletion() (utils/bookingCompletion.js)
+  // at booking-completion time, from booking.customerRating. This Review document is
+  // a separate, optional detailed record (with a comment) — recalculating the
+  // aggregate here too would double-count the same booking's rating.
 
   logger.info('Review created', { reviewId: review._id, bookingId, workerId: booking.workerId, rating });
 
@@ -122,7 +117,7 @@ router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
 }));
 
 // ─── DELETE /api/reviews/:id ────────────────────────────────────────────────────
-// Delete a review (customer can delete own, admin can delete any)
+// Delete a review (customer can delete their own)
 router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid review ID.' });
@@ -146,15 +141,8 @@ router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Review not found.' });
   }
 
-  // Recalculate worker rating
-  const workerReviews = await Review.find({ workerId: deleted.workerId });
-  const totalRating = workerReviews.reduce((sum, r) => sum + r.rating, 0);
-  const avgRating = workerReviews.length > 0 ? totalRating / workerReviews.length : 0;
-
-  await Worker.findByIdAndUpdate(deleted.workerId, {
-    rating: Math.round(avgRating * 100) / 100,
-    totalReviews: workerReviews.length
-  });
+  // NOTE: worker.rating/totalReviews aggregate fields are not touched here — see
+  // the note in POST / above. They're owned by finalizeBookingCompletion().
 
   return res.json({ success: true, message: 'Review deleted successfully.' });
 }));
