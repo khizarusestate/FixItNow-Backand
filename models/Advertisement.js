@@ -5,7 +5,6 @@ const advertisementSchema = new mongoose.Schema(
     workerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Worker',
-      required: true,
       index: true,
     },
     customerId: {
@@ -48,6 +47,19 @@ const advertisementSchema = new mongoose.Schema(
       enum: ['pending', 'approved', 'rejected', 'expired'],
       default: 'pending',
       index: true,
+    },
+    adminNote: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
     },
     location: String,
     latitude: Number,
