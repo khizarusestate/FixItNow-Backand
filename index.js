@@ -26,6 +26,7 @@ import mongoose from "mongoose";
 import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
+import { UPLOADS_ROOT } from "./utils/uploadPaths.js";
 import fs from "fs";
 
 import routes from "./routes/index.js";
@@ -320,7 +321,7 @@ app.use(validateContentType);
 app.use(preventParameterPollution);
 
 // ─── Uploads ────────────────────────────────────────────────────────────────
-const uploadsDir = path.join(__dirname, "uploads");
+const uploadsDir = UPLOADS_ROOT;
 
 const folders = [
   "admin-profiles",
@@ -405,7 +406,7 @@ app.use(
       return res.status(401).json({ success: false, message: "Invalid token." });
     }
   },
-  express.static(path.join(__dirname, "uploads"), {
+  express.static(UPLOADS_ROOT, {
     maxAge: process.env.NODE_ENV === "production" ? "7d" : 0,
     etag: true,
     lastModified: true,

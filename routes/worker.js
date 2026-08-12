@@ -21,6 +21,7 @@ import { resolveWorkerServiceFields, resolveWorkerServicesArray, applyWorkerServ
 import ServiceRequest from '../models/ServiceRequest.js';
 import Service from '../models/Service.js';
 import { notifyAllAdmins } from '../utils/createNotification.js';
+import { uploadsSubdir } from '../utils/uploadPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,7 @@ const __dirname = path.dirname(__filename);
 const router = express.Router();
 
 // Configure multer for profile picture uploads
-const uploadsDir = path.join(__dirname, '../uploads/profile-pictures');
+const uploadsDir = uploadsSubdir('profile-pictures');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }

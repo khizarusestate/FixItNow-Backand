@@ -1,13 +1,9 @@
 import multer from "multer";
-import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
 import { generateSecureFilename } from "./fileValidation.js";
+import { uploadsSubdir } from "./uploadPaths.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const uploadsDir = path.join(__dirname, "../uploads/profile-pictures");
+const uploadsDir = uploadsSubdir("profile-pictures");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }

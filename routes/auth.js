@@ -38,6 +38,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { validateFile, generateSecureFilename } from "../utils/fileValidation.js";
+import { uploadsSubdir } from "../utils/uploadPaths.js";
 import { profilePictureUpload } from "../utils/profilePictureMulter.js";
 import { CUSTOMER_STATUS, WORKER_STATUS } from "../utils/constants.js";
 import {
@@ -55,7 +56,7 @@ const router = express.Router();
 
 const verificationPhotoStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), "uploads", "worker-verification");
+    const uploadDir = uploadsSubdir("worker-verification");
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }

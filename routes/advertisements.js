@@ -1,17 +1,17 @@
 import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
-import path from 'path';
 import { requireWorker, requireCustomer, requireAdmin, optionalAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
+import { uploadsSubdir } from '../utils/uploadPaths.js';
 import Advertisement from '../models/Advertisement.js';
 
 const router = Router();
 
 const adImageStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), 'uploads', 'advertisements');
+    const uploadDir = uploadsSubdir('advertisements');
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }

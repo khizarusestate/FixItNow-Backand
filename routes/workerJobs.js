@@ -28,6 +28,7 @@ import {
 } from "../utils/bookingCommission.js";
 import { BOOKING_STATUS } from "../utils/constants.js";
 import { generateSecureFilename, validateFile } from "../utils/fileValidation.js";
+import { uploadsSubdir } from "../utils/uploadPaths.js";
 
 const OPEN_STATUSES = [BOOKING_STATUS.PENDING];
 
@@ -68,7 +69,7 @@ function mapMyJobForWorker(booking, customer) {
 
 const commissionReceiptStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), "uploads", "payment-receipts");
+    const uploadDir = uploadsSubdir("payment-receipts");
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }

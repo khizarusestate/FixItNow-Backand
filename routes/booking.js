@@ -21,11 +21,12 @@ import { createNotification, notifyAllAdmins } from '../utils/createNotification
 import { BOOKING_STATUS } from '../utils/constants.js';
 import { notifyAdminNewBooking, notifyCustomerBookingReceived, notifyCustomerJobCompleted } from '../services/notificationService.js';
 import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
+import { uploadsSubdir } from '../utils/uploadPaths.js';
 
 const router = express.Router();
 
 // ─── MULTER CONFIGURATION FOR PAYMENT RECEIPT ────────────────────────
-const uploadDir = 'uploads/payment-receipts';
+const uploadDir = uploadsSubdir('payment-receipts');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
