@@ -69,11 +69,10 @@ const verificationPhotoStorage = multer.diskStorage({
 
 const verificationPhotoUpload = multer({
   storage: verificationPhotoStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-    if (!allowed.includes(file.mimetype)) {
-      return cb(new Error("Verification photo must be JPEG, PNG, or WebP."), false);
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Verification photo must be an image."), false);
     }
     cb(null, true);
   },
