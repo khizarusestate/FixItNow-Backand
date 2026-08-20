@@ -12,7 +12,6 @@ function validCoordinate(value, min, max) {
   return Number.isFinite(n) && n >= min && n <= max;
 }
 
-// Customer can read live location only for their own active booking.
 router.get(
   "/customer/:bookingId",
   requireCustomer,
@@ -34,17 +33,17 @@ router.get(
       return res.status(404).json({ success: false, message: "Booking not found." });
     }
 
-    const active = ["worker-assigned", "in-progress"].includes(booking.status);
+    const active = ["assigned", "worker-assigned", "in-progress"].includes(booking.status);
     if (!active || !booking.workerId) {
       return res.json({
         success: true,
         data: {
           active: false,
           status: booking.status,
-          destination: validCoordinate(booking.latitude, -90, 90) &&
-            validCoordinate(booking.longitude, -180, 180)
-            ? { latitude: Number(booking.latitude), longitude: Number(booking.longitude) }
-            : null,
+          destination:
+            validCoordinate(booking.latitude, -90, 90) && validCoordinate(booking.longitude, -180, 180)
+              ? { latitude: Number(booking.latitude), longitude: Number(booking.longitude) }
+              : null,
           worker: null,
         },
       });
