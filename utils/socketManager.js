@@ -1,12 +1,104 @@
 import logger from "./logger.js";
+import mongoose from "mongoose";
+import Booking from "../bookingSchema.js";
+import WorkerLiveLocation from "../models/WorkerLiveLocation.js";
 
 let io = null;
 let userSockets = new Map(); // userId -> Set<socketId>
 let adminSockets = new Map();
+const lastLocationEmit = new Map();
 
 export function initializeSocketIO(socketIOInstance) {
   io = socketIOInstance;
   logger.info("Socket manager initialized");
+
+  // Live worker tracking is registered here so it uses the same authenticated
+  // Socket.IO connection that already handles presence/notifications.
+  socketIOInstance.on("connection", (socket) => {
+    socket.on("worker-location-update", async (payload = {}) => {
+      try {
+        if (socket.userRole !== "worker" || !socket.userId) return;
+
+        const bookingId = String(payload.bookingId || "");
+        if (!mongoose.Types.ObjectId.isValid(bookingId)) return;
+
+        const latitude = Number(payload.latitude);
+        const longitude = Number(payload.longitude);
+        const accuracy = payload.accuracy == null ? null : Number(payload.accuracy);
+        const heading = payload.heading == null ? null : Number(payload.heading);
+        const speed = payload.speed == null ? null : Number(payload.speed);
+
+        if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return;
+        if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return;
+        if (accuracy != null && (!Number.isFinite(accuracy) || accuracy < 0)) return;
+        if (heading != null && (!Number.isFinite(heading) || heading < 0 || heading > 360)) return;
+        if (speed != null && (!Number.isFinite(speed) || speed < 0)) return;
+
+        // Only the assigned worker may publish a location for this booking.
+        // Tracking is active only while the worker is assigned/on the job.
+        const booking = await Booking.findOne({
+          _id: bookingId,
+          workerId: socket.userId,
+          status: { $in: ["worker-assigned", "in-progress"] },
+          isDeleted: false,
+        })
+          .select("_id workerId customerId status")
+          .lean();
+
+        if (!booking?.customerId) return;
+
+        // Prevent accidental high-frequency writes if a browser sends more
+        // often than intended. The client normally sends every ~3 seconds.
+        const throttleKey = `${socket.userId}:${bookingId}`;
+        const now = Date.now();
+        const previous = lastLocationEmit.get(throttleKey) || 0;
+        if (now - previous < 1500) return;
+        lastLocationEmit.set(throttleKey, now);
+
+        const updatedAt = new Date();
+        await WorkerLiveLocation.findOneAndUpdate(
+          { bookingId: booking._id },
+          {
+            $set: {
+              workerId: booking.workerId,
+              customerId: booking.customerId,
+              latitude,
+              longitude,
+              accuracy,
+              heading,
+              speed,
+              updatedAt,
+            },
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+
+        emitToUser(booking.customerId, "worker-location-update", {
+          bookingId: String(booking._id),
+          latitude,
+          longitude,
+          accuracy,
+          heading,
+          speed,
+          status: booking.status,
+          updatedAt: updatedAt.toISOString(),
+        });
+      } catch (error) {
+        logger.warn("Worker live-location update failed", {
+          error: error?.message,
+          socketId: socket.id,
+        });
+      }
+    });
+
+    socket.on("disconnect", () => {
+      if (socket.userId) {
+        for (const key of lastLocationEmit.keys()) {
+          if (key.startsWith(`${socket.userId}:`)) lastLocationEmit.delete(key);
+        }
+      }
+    });
+  });
 }
 
 export function addAdminSocket(adminId, socketId) {
