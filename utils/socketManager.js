@@ -3,6 +3,20 @@ import mongoose from "mongoose";
 import Booking from "../bookingSchema.js";
 import WorkerLiveLocation from "../models/WorkerLiveLocation.js";
 
+const ARRIVAL_RADIUS_METERS = 100;
+const MAX_RELIABLE_ACCURACY_METERS = 100;
+
+function distanceMeters(lat1, lon1, lat2, lon2) {
+  const toRad = (value) => (value * Math.PI) / 180;
+  const earthRadius = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 let io = null;
 let userSockets = new Map(); // userId -> Set<socketId>
 let adminSockets = new Map();
@@ -35,10 +49,10 @@ export function initializeSocketIO(socketIOInstance) {
         const booking = await Booking.findOne({
           _id: bookingId,
           workerId: socket.userId,
-          status: { $in: ["assigned", "worker-assigned", "in-progress"] },
+          status: { $in: ["assigned", "worker-assigned", "on-the-way", "in-progress"] },
           isDeleted: false,
         })
-          .select("_id workerId customerId status")
+          .select("_id workerId customerId status latitude longitude serviceTitle")
           .lean();
 
         if (!booking?.customerId) return;
@@ -50,6 +64,56 @@ export function initializeSocketIO(socketIOInstance) {
         lastLocationEmit.set(throttleKey, now);
 
         const updatedAt = new Date();
+        let nextStatus = booking.status;
+        let statusChanged = false;
+        const destinationReady =
+          Number.isFinite(Number(booking.latitude)) &&
+          Number.isFinite(Number(booking.longitude));
+
+        if (nextStatus === "assigned" || nextStatus === "worker-assigned") {
+          nextStatus = "on-the-way";
+          statusChanged = true;
+        }
+
+        if (
+          nextStatus === "on-the-way" &&
+          destinationReady &&
+          (accuracy == null || accuracy <= MAX_RELIABLE_ACCURACY_METERS)
+        ) {
+          const distance = distanceMeters(
+            latitude,
+            longitude,
+            Number(booking.latitude),
+            Number(booking.longitude),
+          );
+          if (distance <= ARRIVAL_RADIUS_METERS) {
+            nextStatus = "in-progress";
+            statusChanged = true;
+          }
+        }
+
+        if (statusChanged) {
+          const statusUpdate = { status: nextStatus };
+          if (nextStatus === "on-the-way") statusUpdate.onTheWayAt = updatedAt;
+          if (nextStatus === "in-progress") statusUpdate.startedAt = updatedAt;
+          await Booking.updateOne(
+            { _id: booking._id, workerId: socket.userId, status: booking.status },
+            {
+              $set: statusUpdate,
+              $push: {
+                timeline: {
+                  status: nextStatus,
+                  timestamp: updatedAt,
+                  note:
+                    nextStatus === "on-the-way"
+                      ? "Worker started travelling to the customer."
+                      : "Worker reached the customer location and the job is now in progress.",
+                },
+              },
+            },
+          );
+        }
+
         await WorkerLiveLocation.findOneAndUpdate(
           { bookingId: booking._id },
           {
@@ -74,9 +138,25 @@ export function initializeSocketIO(socketIOInstance) {
           accuracy,
           heading,
           speed,
-          status: booking.status,
+          status: nextStatus,
           updatedAt: updatedAt.toISOString(),
         });
+
+        if (statusChanged) {
+          emitToUser(booking.customerId, "booking-status-update", {
+            bookingId: String(booking._id),
+            serviceTitle: booking.serviceTitle,
+            status: nextStatus,
+            message:
+              nextStatus === "on-the-way"
+                ? "Your worker is on the way."
+                : "Your worker has arrived and the service is now in progress.",
+          });
+          emitToAdmin("refresh", {
+            type: "bookings",
+            timestamp: updatedAt.toISOString(),
+          });
+        }
       } catch (error) {
         logger.warn("Worker live-location update failed", {
           error: error?.message,

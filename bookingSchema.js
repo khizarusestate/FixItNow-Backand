@@ -81,6 +81,7 @@ const bookingSchema = new mongoose.Schema(
         'pending',           // Booking created, waiting for worker or has pending claim
         'claim-pending',     // Worker claimed, admin reviewing (internal state)
         'worker-assigned',   // Admin approved claim, worker assigned
+        'on-the-way',        // Worker has started travelling to the customer
         'in-progress',       // Worker clicked "Go to Work", actively working
         'completed',         // Both marked done
         'cancelled',         // Customer or admin cancelled
@@ -107,10 +108,15 @@ const bookingSchema = new mongoose.Schema(
       default: null,
       description: 'Admin who approved the claim'
     },
+    onTheWayAt: {
+      type: Date,
+      default: null,
+      description: 'Set when worker GPS tracking starts after assignment'
+    },
     startedAt: {
       type: Date,
       default: null,
-      description: 'Set when worker clicks Go to Work (in-progress status)'
+      description: 'Set automatically when worker reaches the customer geofence'
     },
     timeline: [{
       status: String,

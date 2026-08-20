@@ -33,7 +33,7 @@ router.get(
       return res.status(404).json({ success: false, message: "Booking not found." });
     }
 
-    const active = ["assigned", "worker-assigned", "in-progress"].includes(booking.status);
+    const active = ["assigned", "worker-assigned", "on-the-way", "in-progress"].includes(booking.status);
     if (!active || !booking.workerId) {
       return res.json({
         success: true,
