@@ -19,14 +19,142 @@ import {
 import { finalizeBookingCompletion } from '../utils/bookingCompletion.js';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 import { BOOKING_STATUS } from '../utils/constants.js';
-import { notifyAdminNewBooking, notifyCustomerBookingReceived, notifyCustomerJobCompleted } from '../services/notificationService.js';
+import {
+  notifyAdminNewBooking,
+  notifyCustomerBookingReceived,
+  notifyCustomerJobCompleted
+} from '../services/notificationService.js';
 import { notifyWorkersOfHighPriorityJob } from '../utils/workerJobNotifications.js';
 import { uploadsSubdir } from '../utils/uploadPaths.js';
 
 const router = express.Router();
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LIVE LOCATION CONFIGURATION
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Worker location is only tracked while travelling to the customer.
+ *
+ * ARRIVAL_RADIUS_METERS:
+ * When worker comes within this distance of customer's booking coordinates,
+ * the booking automatically changes:
+ *
+ *     on-the-way → in-progress
+ *
+ * No manual "Arrived" button is required.
+ */
+const ARRIVAL_RADIUS_METERS = 50;
+
+/**
+ * Calculate distance between two GPS coordinates using the Haversine formula.
+ *
+ * Returns distance in meters.
+ */
+const calculateDistanceMeters = (
+  latitude1,
+  longitude1,
+  latitude2,
+  longitude2,
+) => {
+  const lat1 = Number(latitude1);
+  const lon1 = Number(longitude1);
+  const lat2 = Number(latitude2);
+  const lon2 = Number(longitude2);
+
+  if (
+    !Number.isFinite(lat1) ||
+    !Number.isFinite(lon1) ||
+    !Number.isFinite(lat2) ||
+    !Number.isFinite(lon2)
+  ) {
+    return null;
+  }
+
+  const earthRadiusMeters = 6371000;
+
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLon / 2) ** 2;
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusMeters * c;
+};
+
+/**
+ * Validate GPS coordinate values.
+ */
+const isValidCoordinate = (latitude, longitude) => {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180
+  );
+};
+
+/**
+ * Safely convert a booking document into the location payload that can be
+ * sent to the customer.
+ */
+const getLiveLocationPayload = (booking) => ({
+  bookingId: String(booking._id),
+  status: booking.status,
+  latitude: booking.currentLatitude ?? null,
+  longitude: booking.currentLongitude ?? null,
+  lastLocationUpdate: booking.lastLocationUpdate
+    ? new Date(booking.lastLocationUpdate).toISOString()
+    : null,
+});
+
+/**
+ * Send a live-location update to the customer.
+ */
+const emitWorkerLocationUpdate = (booking) => {
+  if (!booking?.customerId) return;
+
+  emitToUser(String(booking.customerId), 'worker-location-update', {
+    ...getLiveLocationPayload(booking),
+    workerId: booking.workerId ? String(booking.workerId) : null,
+  });
+};
+
+/**
+ * Send a booking status update to both customer and worker.
+ */
+const emitBookingStatusUpdate = (booking, extra = {}) => {
+  const payload = {
+    bookingId: String(booking._id),
+    serviceTitle: booking.serviceTitle,
+    status: booking.status,
+    ...extra,
+  };
+
+  if (booking.customerId) {
+    emitToUser(String(booking.customerId), 'booking-status-update', payload);
+  }
+
+  if (booking.workerId) {
+    emitToUser(String(booking.workerId), 'booking-status-update', payload);
+  }
+};
+
 // ─── MULTER CONFIGURATION FOR PAYMENT RECEIPT ────────────────────────
 const uploadDir = uploadsSubdir('payment-receipts');
+
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -36,26 +164,49 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const uniqueName = `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}${path.extname(file.originalname)}`;
+    const uniqueName =
+      `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` +
+      `${path.extname(file.originalname)}`;
+
     cb(null, uniqueName);
   }
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
-  const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.pdf'];
+  const allowedMimes = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'application/pdf',
+  ];
 
-  if (allowedMimes.includes(file.mimetype) && allowedExts.includes(path.extname(file.originalname).toLowerCase())) {
+  const allowedExts = [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.gif',
+    '.pdf',
+  ];
+
+  if (
+    allowedMimes.includes(file.mimetype) &&
+    allowedExts.includes(path.extname(file.originalname).toLowerCase())
+  ) {
     cb(null, true);
   } else {
-    cb(new Error('Only image (JPG, PNG, GIF) or PDF files are allowed'), false);
+    cb(
+      new Error('Only image (JPG, PNG, GIF) or PDF files are allowed'),
+      false,
+    );
   }
 };
 
 const paymentReceiptUpload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-  fileFilter
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter,
 });
 
 // Helper to emit notifications to admin
@@ -64,12 +215,15 @@ const notifyAdmin = (type, action, message) => {
     type,
     action,
     message,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 };
 
 const refreshAdmin = (type) => {
-  emitToAdmin('refresh', { type, timestamp: new Date().toISOString() });
+  emitToAdmin('refresh', {
+    type,
+    timestamp: new Date().toISOString(),
+  });
 };
 
 // ─── GET /api/bookings ────────────────────────
@@ -84,26 +238,34 @@ router.get('/', optionalAuth, asyncHandler(async (req, res) => {
 
       if (customer) {
         // Customer: return their bookings
-        const bookings = await Booking.find({ customerId: req.userId })
+        const bookings = await Booking.find({
+          customerId: req.userId,
+        })
           .sort({ createdAt: -1 })
           .limit(50);
+
         return res.json({
           success: true,
           data: bookings,
-          userType: 'customer'
+          userType: 'customer',
         });
       } else if (worker) {
         // Worker: return available jobs
         const bookings = await Booking.find({
-          status: { $in: ['pending', 'claim-pending'] },
-          serviceCategory: { $in: worker.serviceCategories || [] }
+          status: {
+            $in: ['pending', 'claim-pending'],
+          },
+          serviceCategory: {
+            $in: worker.serviceCategories || [],
+          },
         })
           .sort({ createdAt: -1 })
           .limit(50);
+
         return res.json({
           success: true,
           data: bookings,
-          userType: 'worker'
+          userType: 'worker',
         });
       }
     }
@@ -112,13 +274,14 @@ router.get('/', optionalAuth, asyncHandler(async (req, res) => {
     res.json({
       success: true,
       data: [],
-      message: 'Login to view bookings'
+      message: 'Login to view bookings',
     });
   } catch (error) {
     logger.error('GET /bookings error:', error);
+
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch bookings'
+      message: 'Failed to fetch bookings',
     });
   }
 }));
@@ -131,85 +294,122 @@ const multerErrorHandler = (err, req, res, next) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
         success: false,
-        message: 'File size too large. Maximum 5MB allowed.'
+        message: 'File size too large. Maximum 5MB allowed.',
       });
     }
+
     return res.status(400).json({
       success: false,
-      message: err.message || 'File upload error'
-    });
-  } else if (err) {
-    return res.status(400).json({
-      success: false,
-      message: err.message || 'Upload failed'
+      message: err.message || 'File upload error',
     });
   }
+
+  if (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'Upload failed',
+    });
+  }
+
   next();
 };
 
-router.post('/',
+router.post(
+  '/',
   optionalAuth,
   (req, res, next) => {
-    paymentReceiptUpload.single('paymentReceipt')(req, res, (err) => {
-      multerErrorHandler(err, req, res, next);
-    });
+    paymentReceiptUpload.single('paymentReceipt')(
+      req,
+      res,
+      (err) => {
+        multerErrorHandler(err, req, res, next);
+      },
+    );
   },
   asyncHandler(async (req, res) => {
     try {
-      const { serviceTitle, serviceId, category, address, location, phone, email, notes, name, latitude, longitude, placeId } = req.body;
-      const bookingLocation = (location || address || '').trim();
+      const {
+        serviceTitle,
+        serviceId,
+        category,
+        address,
+        location,
+        phone,
+        email,
+        notes,
+        name,
+        latitude,
+        longitude,
+        placeId,
+      } = req.body;
+
+      const bookingLocation = (
+        location ||
+        address ||
+        ''
+      ).trim();
 
       // Validate required fields
       if (!serviceTitle || serviceTitle.length < 3) {
         return res.status(400).json({
           success: false,
-          message: 'Service title must be at least 3 characters long'
+          message: 'Service title must be at least 3 characters long',
         });
       }
 
       if (!serviceId) {
         return res.status(400).json({
           success: false,
-          message: 'Service ID is required'
+          message: 'Service ID is required',
         });
       }
 
       if (!phone || phone.length < 10) {
         return res.status(400).json({
           success: false,
-          message: 'Valid phone number is required (minimum 10 digits)'
+          message: 'Valid phone number is required (minimum 10 digits)',
         });
       }
 
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (
+        !email ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+      ) {
         return res.status(400).json({
           success: false,
-          message: 'Valid email address is required'
+          message: 'Valid email address is required',
         });
       }
 
       if (!bookingLocation) {
         return res.status(400).json({
           success: false,
-          message: 'Location is required'
+          message: 'Location is required',
         });
       }
 
       let customer = null;
       let isGuest = true;
 
-      if (req.user?.role === 'customer' && req.user?.id) {
+      if (
+        req.user?.role === 'customer' &&
+        req.user?.id
+      ) {
         customer = await Customer.findOne({
           _id: req.user.id,
           isDeleted: false,
         });
+
         if (customer) {
           isGuest = false;
         }
       }
 
       if (isGuest) {
-        if (!name || String(name).trim().length < 2) {
+        if (
+          !name ||
+          String(name).trim().length < 2
+        ) {
           return res.status(400).json({
             success: false,
             message: 'Your full name is required.',
@@ -224,574 +424,1144 @@ router.post('/',
       try {
         const Service = mongoose.model('Service');
         const service = await Service.findById(serviceId);
+
         if (!service) {
           return res.status(404).json({
             success: false,
-            message: 'Service not found'
+            message: 'Service not found',
           });
         }
 
         servicePrice = service.price || 0;
-        serviceCategory = service.category || category || '';
+        serviceCategory =
+          service.category ||
+          category ||
+          '';
 
         if (servicePrice <= 0) {
-          logger.warn('Service has zero or invalid price', { serviceId, servicePrice });
+          logger.warn(
+            'Service has zero or invalid price',
+            {
+              serviceId,
+              servicePrice,
+            },
+          );
+
           return res.status(400).json({
             success: false,
-            message: 'Service price is not configured. Please contact admin.'
+            message:
+              'Service price is not configured. Please contact admin.',
           });
         }
       } catch (error) {
-        logger.error('Error fetching service details', { serviceId, error: error.message });
+        logger.error(
+          'Error fetching service details',
+          {
+            serviceId,
+            error: error.message,
+          },
+        );
+
         return res.status(500).json({
           success: false,
-          message: 'Error fetching service details'
+          message:
+            'Error fetching service details',
         });
       }
 
-      const canonicalCategory = String(serviceCategory || category || '').trim();
+      const canonicalCategory = String(
+        serviceCategory ||
+          category ||
+          '',
+      ).trim();
 
       const booking = await Booking.create({
-        customerId: customer?._id || null,
+        customerId:
+          customer?._id || null,
+
         isGuest,
-        customerName: name || customer?.fullName,
-        phone: phone || customer?.phone,
-        email: email || customer?.email,
+
+        customerName:
+          name || customer?.fullName,
+
+        phone:
+          phone || customer?.phone,
+
+        email:
+          email || customer?.email,
+
         serviceTitle,
-        category: canonicalCategory,
-        serviceCategory: canonicalCategory,
-        serviceId: serviceId || null,
-        price: servicePrice,
-        address: bookingLocation,
-        location: bookingLocation,
-        latitude: latitude != null && latitude !== '' ? Number(latitude) : null,
-        longitude: longitude != null && longitude !== '' ? Number(longitude) : null,
-        placeId: placeId || '',
-        notes: notes || '',
-        status: BOOKING_STATUS.PENDING,
+
+        category:
+          canonicalCategory,
+
+        serviceCategory:
+          canonicalCategory,
+
+        serviceId:
+          serviceId || null,
+
+        price:
+          servicePrice,
+
+        address:
+          bookingLocation,
+
+        location:
+          bookingLocation,
+
+        latitude:
+          latitude != null &&
+          latitude !== ''
+            ? Number(latitude)
+            : null,
+
+        longitude:
+          longitude != null &&
+          longitude !== ''
+            ? Number(longitude)
+            : null,
+
+        placeId:
+          placeId || '',
+
+        notes:
+          notes || '',
+
+        status:
+          BOOKING_STATUS.PENDING,
+
+        // Live tracking starts empty.
+        // These fields will be populated when the assigned worker
+        // starts sending GPS coordinates.
+        currentLatitude: null,
+        currentLongitude: null,
+        lastLocationUpdate: null,
+        onTheWayAt: null,
+
         paymentDetails: {
-          totalAmount: servicePrice,
+          totalAmount:
+            servicePrice,
         },
+
         timeline: [
           {
-            status: BOOKING_STATUS.PENDING,
-            timestamp: new Date(),
-            note: 'Booking created and visible to workers',
+            status:
+              BOOKING_STATUS.PENDING,
+
+            timestamp:
+              new Date(),
+
+            note:
+              'Booking created and visible to workers',
           },
         ],
       });
 
       if (customer) {
-        await Customer.findByIdAndUpdate(customer._id, {
-          $inc: { totalBookings: 1 },
-          lastBooking: new Date(),
-        });
+        await Customer.findByIdAndUpdate(
+          customer._id,
+          {
+            $inc: {
+              totalBookings: 1,
+            },
+            lastBooking:
+              new Date(),
+          },
+        );
 
         createNotification({
           userId: customer._id,
           userRole: 'customer',
           title: 'Booking submitted',
-          message: `We received your request for ${booking.serviceTitle}. Workers can claim it now.`,
+          message:
+            `We received your request for ${booking.serviceTitle}. Workers can claim it now.`,
           type: 'info',
-        }).catch(() => { });
+        }).catch(() => {});
       }
 
-      notifyAdmin('bookings', 'created', `New booking: ${booking.serviceTitle} by ${booking.customerName}`);
+      notifyAdmin(
+        'bookings',
+        'created',
+        `New booking: ${booking.serviceTitle} by ${booking.customerName}`,
+      );
+
       refreshAdmin('bookings');
 
       // Send notifications via notification service
-      notifyAdminNewBooking(booking).catch(() => { });
+      notifyAdminNewBooking(
+        booking,
+      ).catch(() => {});
+
       if (customer) {
-        notifyCustomerBookingReceived(customer._id, booking).catch(() => { });
+        notifyCustomerBookingReceived(
+          customer._id,
+          booking,
+        ).catch(() => {});
       }
 
       notifyWorkersOfHighPriorityJob(
-        booking.toObject?.() ? booking.toObject() : booking,
-      ).catch(() => { });
+        booking.toObject?.()
+          ? booking.toObject()
+          : booking,
+      ).catch(() => {});
 
       return res.status(201).json({
         success: true,
-        message: 'Booking created successfully',
-        data: booking
+        message:
+          'Booking created successfully',
+        data: booking,
       });
     } catch (error) {
-      logger.error('Booking creation error:', error);
+      logger.error(
+        'Booking creation error:',
+        error,
+      );
+
       return res.status(500).json({
         success: false,
-        message: error.message || 'Booking failed. Please try again.'
+        message:
+          error.message ||
+          'Booking failed. Please try again.',
       });
     }
-  })
+  }),
 );
 
 // ─── GET /api/bookings/my ──────────────────────────────────────────────────────
 // Get current customer's bookings (with worker details when assigned)
-router.get('/my', requireCustomer, asyncHandler(async (req, res) => {
-  const bookings = await Booking.find({ customerId: req.customer.id, isDeleted: false })
-    .populate('workerId', 'fullName phoneNumber email primaryServiceCategory')
-    .sort({ createdAt: -1 })
-    .lean();
+router.get(
+  '/my',
+  requireCustomer,
+  asyncHandler(async (req, res) => {
+    const bookings =
+      await Booking.find({
+        customerId:
+          req.customer.id,
+        isDeleted: false,
+      })
+        .populate(
+          'workerId',
+          'fullName phoneNumber email primaryServiceCategory',
+        )
+        .sort({
+          createdAt: -1,
+        })
+        .lean();
 
-  return res.json({
-    success: true,
-    data: bookings.map(b => ({
-      id: b._id,
-      serviceTitle: b.serviceTitle,
-      category: b.category,
-      address: b.address,
-      location: b.location || b.address,
-      notes: b.notes,
-      status: b.status,
-      price: b.price,
-      createdAt: b.createdAt,
-      updatedAt: b.updatedAt,
-      paymentDetails: b.paymentDetails
-        ? { totalAmount: b.paymentDetails.totalAmount }
-        : null,
-      customerRating: b.customerRating,
-      customerMarkedDone: Boolean(b.customerMarkedDone),
-      customerMarkedDoneAt: b.customerMarkedDoneAt,
-      workerMarkedDone: Boolean(b.workerMarkedDone),
-      workerMarkedDoneAt: b.workerMarkedDoneAt,
-      worker: b.workerId ? {
-        id: b.workerId._id,
-        fullName: b.workerId.fullName,
-        phoneNumber: b.workerId.phoneNumber,
-        emailAddress: b.workerId.email,
-        primaryServiceCategory: b.workerId.primaryServiceCategory
-      } : null
-    }))
-  });
-}));
+    return res.json({
+      success: true,
+
+      data: bookings.map((b) => ({
+        id: b._id,
+
+        serviceTitle:
+          b.serviceTitle,
+
+        category:
+          b.category,
+
+        address:
+          b.address,
+
+        location:
+          b.location ||
+          b.address,
+
+        notes:
+          b.notes,
+
+        status:
+          b.status,
+
+        price:
+          b.price,
+
+        createdAt:
+          b.createdAt,
+
+        updatedAt:
+          b.updatedAt,
+
+        /*
+         * Customer's fixed destination coordinates.
+         */
+        latitude:
+          b.latitude ?? null,
+
+        longitude:
+          b.longitude ?? null,
+
+        placeId:
+          b.placeId || '',
+
+        /*
+         * Worker's current live coordinates.
+         *
+         * Only useful while booking is on-the-way.
+         */
+        currentLatitude:
+          b.status === 'on-the-way'
+            ? b.currentLatitude ?? null
+            : null,
+
+        currentLongitude:
+          b.status === 'on-the-way'
+            ? b.currentLongitude ?? null
+            : null,
+
+        lastLocationUpdate:
+          b.status === 'on-the-way' &&
+          b.lastLocationUpdate
+            ? b.lastLocationUpdate
+            : null,
+
+        onTheWayAt:
+          b.onTheWayAt || null,
+
+        paymentDetails:
+          b.paymentDetails
+            ? {
+                totalAmount:
+                  b.paymentDetails.totalAmount,
+              }
+            : null,
+
+        customerRating:
+          b.customerRating,
+
+        customerMarkedDone:
+          Boolean(
+            b.customerMarkedDone,
+          ),
+
+        customerMarkedDoneAt:
+          b.customerMarkedDoneAt,
+
+        workerMarkedDone:
+          Boolean(
+            b.workerMarkedDone,
+          ),
+
+        workerMarkedDoneAt:
+          b.workerMarkedDoneAt,
+
+        worker: b.workerId
+          ? {
+              id:
+                b.workerId._id,
+
+              fullName:
+                b.workerId.fullName,
+
+              phoneNumber:
+                b.workerId.phoneNumber,
+
+              emailAddress:
+                b.workerId.email,
+
+              primaryServiceCategory:
+                b.workerId.primaryServiceCategory,
+            }
+          : null,
+      })),
+    });
+  }),
+);
 
 // ─── GET /api/bookings/my/claimed ──────────────────────────────────────────────
 // Get current worker's claimed and assigned bookings
-// Shows: Full info for worker-assigned, in-progress, completed
-// Hides: Sensitive info for claim-pending status
-router.get('/my/claimed', requireWorker, asyncHandler(async (req, res) => {
-  const { status } = req.query;
+//
+// Shows:
+//   - Full info for worker-assigned
+//   - Full info for on-the-way
+//   - Full info for in-progress
+//   - Full info for completed
+//
+// Hides:
+//   - Sensitive info for claim-pending
+router.get(
+  '/my/claimed',
+  requireWorker,
+  asyncHandler(async (req, res) => {
+    const { status } =
+      req.query;
 
-  // Build query for worker's bookings
-  const query = {
-    $or: [
-      { workerId: req.worker.id },      // Worker assigned
-      { claimWorkerId: req.worker.id }  // Worker claimed but not yet approved
-    ],
-    isDeleted: false
-  };
+    // Build query for worker's bookings
+    const query = {
+      $or: [
+        {
+          workerId:
+            req.worker.id,
+        },
+        {
+          claimWorkerId:
+            req.worker.id,
+        },
+      ],
 
-  // Optional status filter
-  if (status && ['pending', 'claim-pending', 'worker-assigned', 'in-progress', 'completed'].includes(status)) {
-    query.status = status;
-  }
+      isDeleted: false,
+    };
 
-  const bookings = await Booking.find(query)
-    .populate('customerId', 'fullName phone email')
-    .sort({ createdAt: -1 })
-    .lean();
+    // Optional status filter
+    if (
+      status &&
+      [
+        'pending',
+        'claim-pending',
+        'worker-assigned',
+        'on-the-way',
+        'in-progress',
+        'completed',
+      ].includes(status)
+    ) {
+      query.status = status;
+    }
 
-  // Import visibility helper
-  const { getVisibleBookingInfo } = await import('../utils/bookingVisibility.js');
+    const bookings =
+      await Booking.find(query)
+        .populate(
+          'customerId',
+          'fullName phone email',
+        )
+        .sort({
+          createdAt: -1,
+        })
+        .lean();
 
-  return res.json({
-    success: true,
-    data: bookings.map(b => {
-      // Get filtered info based on status
-      const visibleInfo = getVisibleBookingInfo(b, b.status);
+    // Import visibility helper
+    const {
+      getVisibleBookingInfo,
+    } = await import(
+      '../utils/bookingVisibility.js'
+    );
 
-      return {
-        id: b._id,
-        serviceTitle: b.serviceTitle,
-        serviceCategory: b.serviceCategory,
-        status: b.status,
-        date: b.date,
-        time: b.time,
-        budget: b.budget,
-        createdAt: b.createdAt,
-        
-        // Visibility: shows based on status
-        phone: visibleInfo.phone,
-        email: visibleInfo.email,
-        address: visibleInfo.address,
-        city: visibleInfo.city,
-        area: visibleInfo.area,
-        latitude: visibleInfo.latitude,
-        longitude: visibleInfo.longitude,
-        
-        // Always show description to help worker
-        description: b.description,
-        
-        // Customer info
-        customerName: b.customerName,
-        customerId: b.customerId._id,
-        
-        // Timing
-        claimedAt: b.claimedAt,
-        approvedAt: b.approvedAt,
-        startedAt: b.startedAt,
-        
-        // Work status
-        workerMarkedDone: Boolean(b.workerMarkedDone),
-        workerMarkedDoneAt: b.workerMarkedDoneAt,
-        customerMarkedDone: Boolean(b.customerMarkedDone),
-        customerMarkedDoneAt: b.customerMarkedDoneAt,
-        
-        // Payment
-        paymentDetails: b.paymentDetails ? {
-          totalAmount: b.paymentDetails.totalAmount,
-          serviceFee: b.paymentDetails.serviceFee,
-          workerEarnings: b.paymentDetails.workerEarnings
-        } : null,
-        
-        // UI hints for frontend
-        isHidden: visibleInfo.isHidden,
-        showFullInfo: !visibleInfo.isHidden,
-        canMarkDone: ['in-progress', 'worker-assigned'].includes(b.status),
-        canStartWork: b.status === 'worker-assigned'
-      };
-    })
-  });
-}));
+    return res.json({
+      success: true,
+
+      data: bookings.map((b) => {
+        // Get filtered info based on status
+        const visibleInfo =
+          getVisibleBookingInfo(
+            b,
+            b.status,
+          );
+
+        return {
+          id: b._id,
+
+          serviceTitle:
+            b.serviceTitle,
+
+          serviceCategory:
+            b.serviceCategory,
+
+          status:
+            b.status,
+
+          date:
+            b.date,
+
+          time:
+            b.time,
+
+          budget:
+            b.budget,
+
+          createdAt:
+            b.createdAt,
+
+          // Customer destination
+          latitude:
+            visibleInfo.latitude,
+
+          longitude:
+            visibleInfo.longitude,
+
+          // Live worker location
+          currentLatitude:
+            ['on-the-way'].includes(
+              b.status,
+            )
+              ? b.currentLatitude ??
+                null
+              : null,
+
+          currentLongitude:
+            ['on-the-way'].includes(
+              b.status,
+            )
+              ? b.currentLongitude ??
+                null
+              : null,
+
+          lastLocationUpdate:
+            b.status === 'on-the-way' &&
+            b.lastLocationUpdate
+              ? b.lastLocationUpdate
+              : null,
+
+          onTheWayAt:
+            b.onTheWayAt ||
+            null,
+
+          // Visibility
+          phone:
+            visibleInfo.phone,
+
+          email:
+            visibleInfo.email,
+
+          address:
+            visibleInfo.address,
+
+          city:
+            visibleInfo.city,
+
+          area:
+            visibleInfo.area,
+
+          // Always show description
+          description:
+            b.description,
+
+          // Customer info
+          customerName:
+            b.customerName,
+
+          customerId:
+            b.customerId?._id,
+
+          // Timing
+          claimedAt:
+            b.claimedAt,
+
+          approvedAt:
+            b.approvedAt,
+
+          startedAt:
+            b.startedAt,
+
+          // Work status
+          workerMarkedDone:
+            Boolean(
+              b.workerMarkedDone,
+            ),
+
+          workerMarkedDoneAt:
+            b.workerMarkedDoneAt,
+
+          customerMarkedDone:
+            Boolean(
+              b.customerMarkedDone,
+            ),
+
+          customerMarkedDoneAt:
+            b.customerMarkedDoneAt,
+
+          // Payment
+          paymentDetails:
+            b.paymentDetails
+              ? {
+                  totalAmount:
+                    b.paymentDetails
+                      .totalAmount,
+
+                  serviceFee:
+                    b.paymentDetails
+                      .serviceFee,
+
+                  workerEarnings:
+                    b.paymentDetails
+                      .workerEarnings,
+                }
+              : null,
+
+          // UI hints
+          isHidden:
+            visibleInfo.isHidden,
+
+          showFullInfo:
+            !visibleInfo.isHidden,
+
+          canMarkDone:
+            [
+              'worker-assigned',
+              'on-the-way',
+              'in-progress',
+            ].includes(
+              b.status,
+            ),
+
+          /*
+           * No manual "Go to Work" requirement.
+           *
+           * The frontend should start watchPosition when the
+           * booking reaches worker-assigned.
+           */
+          canStartWork:
+            false,
+
+          /*
+           * Frontend can use this to decide whether it should
+           * continue sending GPS updates.
+           */
+          shouldTrackLocation:
+            b.status ===
+            'worker-assigned' ||
+            b.status ===
+            'on-the-way',
+        };
+      }),
+    });
+  }),
+);
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POST /api/bookings/:id/location
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Worker sends their current GPS position here.
+ *
+ * Expected body:
+ *
+ * {
+ *   "latitude": 32.1617,
+ *   "longitude": 74.1883
+ * }
+ *
+ * The worker does NOT manually change the booking status.
+ *
+ * First valid location:
+ *
+ *     worker-assigned → on-the-way
+ *
+ * Once worker is within ARRIVAL_RADIUS_METERS:
+ *
+ *     on-the-way → in-progress
+ *
+ * After in-progress:
+ *
+ *     GPS updates are rejected because tracking should stop.
+ */
+router.post(
+  '/:id/location',
+  requireWorker,
+  asyncHandler(async (req, res) => {
+    if (
+      !mongoose.Types.ObjectId.isValid(
+        req.params.id,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Invalid booking ID.',
+      });
+    }
+
+    const {
+      latitude,
+      longitude,
+    } = req.body;
+
+    if (
+      !isValidCoordinate(
+        latitude,
+        longitude,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Valid latitude and longitude are required.',
+      });
+    }
+
+    const booking =
+      await Booking.findOne({
+        _id:
+          req.params.id,
+
+        isDeleted:
+          false,
+      });
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message:
+          'Booking not found.',
+      });
+    }
+
+    // Only the assigned worker can send location.
+    if (
+      String(booking.workerId) !==
+      String(req.worker.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          'You can only update your location for an assigned booking.',
+      });
+    }
+
+    /*
+     * Tracking is only valid before work begins.
+     *
+     * Once the worker reaches the customer and the booking
+     * becomes in-progress, location tracking ends.
+     */
+    if (
+      ![
+        'worker-assigned',
+        'on-the-way',
+      ].includes(
+        booking.status,
+      )
+    ) {
+      return res.json({
+        success: true,
+        trackingActive: false,
+        status: booking.status,
+        message:
+          'Live tracking is not active for this booking.',
+        data:
+          getLiveLocationPayload(
+            booking,
+          ),
+      });
+    }
+
+    const workerLatitude =
+      Number(latitude);
+
+    const workerLongitude =
+      Number(longitude);
+
+    const now =
+      new Date();
+
+    /*
+     * Save latest worker position.
+     */
+    booking.currentLatitude =
+      workerLatitude;
+
+    booking.currentLongitude =
+      workerLongitude;
+
+    booking.lastLocationUpdate =
+      now;
+
+    let statusChanged =
+      false;
+
+    /*
+     * First GPS update automatically starts the journey.
+     *
+     * No worker button is required.
+     */
+    if (
+      booking.status ===
+      'worker-assigned'
+    ) {
+      booking.status =
+        'on-the-way';
+
+      booking.onTheWayAt =
+        now;
+
+      booking.timeline.push({
+        status:
+          'on-the-way',
+
+        timestamp:
+          now,
+
+        note:
+          'Worker location tracking started automatically.',
+      });
+
+      statusChanged =
+        true;
+    }
+
+    /*
+     * Check distance from worker to customer's
+     * fixed booking destination.
+     */
+    const distanceMeters =
+      calculateDistanceMeters(
+        workerLatitude,
+        workerLongitude,
+        booking.latitude,
+        booking.longitude,
+      );
+
+    /*
+     * Automatically arrive at destination.
+     *
+     * We only perform this transition if the booking has
+     * valid customer coordinates.
+     */
+    if (
+      booking.status ===
+        'on-the-way' &&
+      distanceMeters !== null &&
+      distanceMeters <=
+        ARRIVAL_RADIUS_METERS
+    ) {
+      booking.status =
+        'in-progress';
+
+      booking.startedAt =
+        now;
+
+      booking.timeline.push({
+        status:
+          'in-progress',
+
+        timestamp:
+          now,
+
+        note:
+          `Worker arrived within ${Math.round(distanceMeters)}m of the customer.`,
+      });
+
+      statusChanged =
+        true;
+    }
+
+    await booking.save();
+
+    /*
+     * Always send latest worker location while tracking.
+     */
+    if (
+      booking.status ===
+      'on-the-way'
+    ) {
+      emitWorkerLocationUpdate(
+        booking,
+      );
+    }
+
+    /*
+     * If arrival was detected, notify customer and worker.
+     */
+    if (
+      booking.status ===
+      'in-progress' &&
+      statusChanged
+    ) {
+      emitBookingStatusUpdate(
+        booking,
+        {
+          message:
+            'Worker has arrived and the job is now in progress.',
+          startedAt:
+            booking.startedAt,
+          distanceMeters:
+            distanceMeters !== null
+              ? Math.round(
+                  distanceMeters,
+                )
+              : null,
+        },
+      );
+    } else if (
+      statusChanged &&
+      booking.status ===
+        'on-the-way'
+    ) {
+      emitBookingStatusUpdate(
+        booking,
+        {
+          message:
+            'Worker is on the way to your location.',
+          onTheWayAt:
+            booking.onTheWayAt,
+        },
+      );
+    }
+
+    return res.json({
+      success: true,
+
+      trackingActive:
+        booking.status ===
+        'on-the-way',
+
+      status:
+        booking.status,
+
+      data: {
+        ...getLiveLocationPayload(
+          booking,
+        ),
+
+        distanceMeters:
+          distanceMeters !== null
+            ? Math.round(
+                distanceMeters,
+              )
+            : null,
+
+        arrivalRadiusMeters:
+          ARRIVAL_RADIUS_METERS,
+      },
+    });
+  }),
+);
 
 // ─── DELETE /api/bookings/:id ──────────────────────────────────────────────────
 // Cancel a booking (customer only, only if pending)
-router.delete('/:id', requireCustomer, asyncHandler(async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-    return sendApiError(res, ERROR_CODES.VALIDATION_FAILED, {
-      message: 'Invalid booking ID.',
-      status: 400,
-    });
-  }
-
-  const booking = await Booking.findOne({
-    _id: req.params.id,
-    customerId: req.customer.id,
-    isDeleted: false
-  });
-
-  if (!booking) {
-    return sendApiError(res, ERROR_CODES.BOOKING_NOT_FOUND, {
-      message: 'This booking could not be found. It may have been removed.',
-      status: 404,
-      refreshRecommended: true,
-    });
-  }
-
-  if (rejectBookingAction(res, booking, BOOKING_ACTION.CUSTOMER_CANCEL)) {
-    return;
-  }
-
-  const previousStatus = booking.status;
-
-  booking.status = 'cancelled';
-  booking.timeline.push({
-    status: 'cancelled',
-    timestamp: new Date(),
-    note: 'Cancelled by customer',
-  });
-  await booking.save();
-
-  const customer = await Customer.findById(req.customer.id);
-  if (customer) {
-    const updateFields = {};
-    if (customer.totalBookings > 0) updateFields.totalBookings = -1;
-    if (customer.pendingBookings > 0 && previousStatus === 'pending') {
-      updateFields.pendingBookings = -1;
+router.delete(
+  '/:id',
+  requireCustomer,
+  asyncHandler(async (req, res) => {
+    if (
+      !mongoose.Types.ObjectId.isValid(
+        req.params.id,
+      )
+    ) {
+      return sendApiError(
+        res,
+        ERROR_CODES.VALIDATION_FAILED,
+        {
+          message:
+            'Invalid booking ID.',
+          status: 400,
+        },
+      );
     }
-    if (Object.keys(updateFields).length > 0) {
-      await Customer.findByIdAndUpdate(req.customer.id, { $inc: updateFields });
+
+    const booking =
+      await Booking.findOne({
+        _id:
+          req.params.id,
+
+        customerId:
+          req.customer.id,
+
+        isDeleted:
+          false,
+      });
+
+    if (!booking) {
+      return sendApiError(
+        res,
+        ERROR_CODES.BOOKING_NOT_FOUND,
+        {
+          message:
+            'This booking could not be found. It may have been removed.',
+          status: 404,
+          refreshRecommended:
+            true,
+        },
+      );
     }
-  }
 
-  refreshAdmin('bookings');
-  cacheDelByPrefix('fixitnow:admin:summary').catch(() => { });
-  cacheDelByPrefix('fixitnow:public:services').catch(() => { });
-  notifyAdmin(
-    'bookings',
-    'cancelled',
-    `Booking cancelled: ${booking.serviceTitle} by ${booking.customerName}`,
-  );
+    if (
+      rejectBookingAction(
+        res,
+        booking,
+        BOOKING_ACTION.CUSTOMER_CANCEL,
+      )
+    ) {
+      return;
+    }
 
-  notifyAllAdmins({
-    title: 'Booking cancelled',
-    message: `${booking.customerName} cancelled ${booking.serviceTitle}.`,
-    type: 'warning',
-    relatedEntityId: booking._id,
-  }).catch(() => { });
+    const previousStatus =
+      booking.status;
 
-  const cancelPayload = {
-    bookingId: booking._id,
-    status: 'cancelled',
-    previousStatus,
-    serviceTitle: booking.serviceTitle,
-    message: `Your booking for ${booking.serviceTitle} was cancelled.`,
-  };
+    booking.status =
+      'cancelled';
 
-  emitToUser(String(req.customer.id), 'booking-status-update', cancelPayload);
+    booking.timeline.push({
+      status:
+        'cancelled',
 
-  if (booking.workerId) {
-    emitToUser(String(booking.workerId), 'booking-status-update', {
-      ...cancelPayload,
-      message: `${booking.serviceTitle} was cancelled by the customer.`,
+      timestamp:
+        new Date(),
+
+      note:
+        'Cancelled by customer',
     });
-    createNotification({
-      userId: booking.workerId,
-      userRole: 'worker',
-      title: 'Booking cancelled',
-      message: `${booking.serviceTitle} was cancelled by the customer.`,
-      type: 'warning',
-      relatedEntityId: booking._id,
-    }).catch(() => { });
-  }
 
-  createNotification({
-    userId: req.customer.id,
-    userRole: 'customer',
-    title: 'Booking cancelled',
-    message: `Your booking for ${booking.serviceTitle} was cancelled.`,
-    type: 'warning',
-    relatedEntityId: booking._id,
-  }).catch(() => { });
+    await booking.save();
 
-  return res.json({
-    success: true,
-    message: 'Booking cancelled successfully.',
-    data: {
-      id: booking._id,
-      status: 'cancelled',
-      serviceTitle: booking.serviceTitle,
-    },
-  });
-}));
+    const customer =
+      await Customer.findById(
+        req.customer.id,
+      );
 
-// ─── POST /api/bookings/:id/start-work ─────────────────────────────────────────
-// Worker marks that they are starting work on the booking
-// Transitions: worker-assigned → in-progress
-// Shows: Full customer info to worker (already visible after assignment)
-// Notifies: Customer that worker has started
-router.post('/:id/start-work', requireWorker, asyncHandler(async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-    return res.status(400).json({ success: false, message: 'Invalid booking ID.' });
-  }
+    if (customer) {
+      const updateFields =
+        {};
 
-  const booking = await Booking.findOne({ _id: req.params.id, isDeleted: false })
-    .populate('customerId', 'fullName email phone');
+      if (
+        customer.totalBookings >
+        0
+      ) {
+        updateFields.totalBookings =
+          -1;
+      }
 
-  if (!booking) {
-    return res.status(404).json({ success: false, message: 'Booking not found.' });
-  }
+      if (
+        customer.pendingBookings >
+          0 &&
+        previousStatus ===
+          'pending'
+      ) {
+        updateFields.pendingBookings =
+          -1;
+      }
 
-  // Verify worker owns this booking
-  if (String(booking.workerId) !== String(req.worker.id)) {
-    return res.status(403).json({
-      success: false,
-      message: 'You can only start work on your assigned bookings.'
-    });
-  }
-
-  // Check booking is in assignable state
-  if (booking.status !== 'worker-assigned') {
-    return res.status(400).json({
-      success: false,
-      message: `Cannot start work on booking in ${booking.status} status.`
-    });
-  }
-
-  // Update status
-  booking.status = 'in-progress';
-  booking.startedAt = new Date();
-  await booking.save();
-
-  // Notify customer that worker has started
-  emitToUser(String(booking.customerId), 'work-started', {
-    bookingId: String(booking._id),
-    message: 'Your worker has started the job',
-    workerName: req.worker.fullName,
-    startTime: new Date().toISOString()
-  });
-
-  // Log activity
-  logger.info('Worker started booking', {
-    workerId: req.worker.id,
-    bookingId: booking._id,
-    serviceTitle: booking.serviceTitle
-  });
-
-  return res.json({
-    success: true,
-    message: 'Work started. Customer has been notified.',
-    data: {
-      bookingId: booking._id,
-      status: booking.status,
-      startedAt: booking.startedAt,
-      customerInfo: {
-        name: booking.customerId.fullName,
-        phone: booking.phone,
-        address: booking.address
+      if (
+        Object.keys(
+          updateFields,
+        ).length > 0
+      ) {
+        await Customer.findByIdAndUpdate(
+          req.customer.id,
+          {
+            $inc:
+              updateFields,
+          },
+        );
       }
     }
-  });
-}));
 
-// ─── POST /api/bookings/:id/complete ───────────────────────────────────────────
-// Customer marks done + rating (orange tick). Finalizes when worker also marked done.
-router.post('/:id/complete', requireCustomer, asyncHandler(async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-    return sendApiError(res, ERROR_CODES.VALIDATION_FAILED, {
-      message: 'Invalid booking ID.',
-      status: 400,
-    });
-  }
-
-  const { rating } = req.body;
-  if (!rating || rating < 1 || rating > 5) {
-    return sendApiError(res, ERROR_CODES.VALIDATION_FAILED, {
-      message: 'Please select a rating between 1 and 5 stars before marking this job as done.',
-      status: 400,
-    });
-  }
-
-  const booking = await Booking.findOne({
-    _id: req.params.id,
-    customerId: req.customer.id,
-    isDeleted: false
-  }).populate('workerId', 'fullName totalEarnings completedJobs rating totalReviews');
-
-  if (!booking) {
-    return sendApiError(res, ERROR_CODES.BOOKING_NOT_FOUND, {
-      message: 'This booking could not be found. Please refresh your bookings list.',
-      status: 404,
-      refreshRecommended: true,
-    });
-  }
-
-  if (rejectBookingAction(res, booking, BOOKING_ACTION.CUSTOMER_COMPLETE)) {
-    return;
-  }
-
-  const worker = booking.workerId;
-  if (!worker) {
-    return sendApiError(res, ERROR_CODES.BOOKING_NOT_COMPLETABLE, {
-      message: 'No worker is assigned to this booking yet. You can mark it done after a worker is assigned.',
-      status: 400,
-      refreshRecommended: true,
-      details: { currentStatus: booking.status },
-    });
-  }
-
-  booking.customerMarkedDone = true;
-  booking.customerMarkedDoneAt = new Date();
-  booking.customerRating = rating;
-  booking.timeline.push({
-    status: booking.status,
-    timestamp: new Date(),
-    note: `Customer marked job as done with ${rating} stars (awaiting worker confirmation).`,
-  });
-
-  let serviceFee = 0;
-  let workerEarnings = 0;
-  let newRating = worker.rating || 0;
-  let finalized = false;
-
-  if (booking.workerMarkedDone) {
-    const result = await finalizeBookingCompletion(
-      booking,
-      worker,
-      req.customer.id,
+    refreshAdmin(
+      'bookings',
     );
-    serviceFee = result.serviceFee;
-    workerEarnings = result.workerEarnings;
-    newRating = result.newRating;
-    finalized = true;
-  } else {
-    if (booking.status === 'worker-assigned') {
-      booking.status = 'in-progress';
+
+    cacheDelByPrefix(
+      'fixitnow:admin:summary',
+    ).catch(() => {});
+
+    cacheDelByPrefix(
+      'fixitnow:public:services',
+    ).catch(() => {});
+
+    notifyAdmin(
+      'bookings',
+      'cancelled',
+      `Booking cancelled: ${booking.serviceTitle} by ${booking.customerName}`,
+    );
+
+    notifyAllAdmins({
+      title:
+        'Booking cancelled',
+
+      message:
+        `${booking.customerName} cancelled ${booking.serviceTitle}.`,
+
+      type:
+        'warning',
+
+      relatedEntityId:
+        booking._id,
+    }).catch(() => {});
+
+    const cancelPayload =
+      {
+        bookingId:
+          booking._id,
+
+        status:
+          'cancelled',
+
+        previousStatus,
+
+        serviceTitle:
+          booking.serviceTitle,
+
+        message:
+          `Your booking for ${booking.serviceTitle} was cancelled.`,
+      };
+
+    emitToUser(
+      String(req.customer.id),
+      'booking-status-update',
+      cancelPayload,
+    );
+
+    if (booking.workerId) {
+      emitToUser(
+        String(booking.workerId),
+        'booking-status-update',
+        {
+          ...cancelPayload,
+
+          message:
+            `${booking.serviceTitle} was cancelled by the customer.`,
+        },
+      );
+
+      createNotification({
+        userId:
+          booking.workerId,
+
+        userRole:
+          'worker',
+
+        title:
+          'Booking cancelled',
+
+        message:
+          `${booking.serviceTitle} was cancelled by the customer.`,
+
+        type:
+          'warning',
+
+        relatedEntityId:
+          booking._id,
+      }).catch(() => {});
     }
-    await booking.save();
-  }
 
-  refreshAdmin('bookings');
-
-  if (finalized) {
-    notifyAdmin(
-      'bookings',
-      'completed',
-      `Job completed: ${booking.serviceTitle} by ${worker.fullName}. Rating: ${rating} stars. Commission: ₨${serviceFee}`,
-    );
-    refreshAdmin('revenue');
-
-    // Send completion notifications via notification service
-    notifyCustomerJobCompleted(req.customer.id, booking).catch(() => { });
-
-    emitToUser(worker._id.toString(), 'job-completed', {
-      bookingId: booking._id,
-      serviceTitle: booking.serviceTitle,
-      workerEarnings,
-      rating,
-      newRating: Number(newRating).toFixed(1),
-      message: `Job "${booking.serviceTitle}" is fully completed. Customer rated ${rating} stars.`,
-    });
-    emitToUser(String(req.customer.id), 'booking-status-update', {
-      bookingId: booking._id,
-      serviceTitle: booking.serviceTitle,
-      status: 'completed',
-      rating,
-      customerMarkedDone: true,
-      workerMarkedDone: true,
-      message: `Your ${booking.serviceTitle} service is fully completed.`,
-    });
-  } else {
-    notifyAdmin(
-      'bookings',
-      'updated',
-      `Customer marked ${booking.serviceTitle} as done (${rating}★). Waiting for worker.`,
-    );
-    emitToUser(worker._id.toString(), 'booking-status-update', {
-      bookingId: booking._id,
-      serviceTitle: booking.serviceTitle,
-      status: booking.status,
-      customerMarkedDone: true,
-      workerMarkedDone: false,
-      rating,
-      message: `Customer marked "${booking.serviceTitle}" as done. Please confirm from your dashboard.`,
-    });
     createNotification({
-      userId: worker._id,
-      userRole: 'worker',
-      title: 'Customer marked job done',
-      message: `Please confirm completion for ${booking.serviceTitle}.`,
-      type: 'urgent',
-      relatedEntityId: booking._id,
-      pushOptions: { urgency: 'high' },
-    }).catch(() => { });
-    emitToUser(String(req.customer.id), 'booking-status-update', {
-      bookingId: booking._id,
-      serviceTitle: booking.serviceTitle,
-      status: booking.status,
-      customerMarkedDone: true,
-      workerMarkedDone: false,
-      rating,
-      message: `Thanks! We notified the worker to confirm completion of ${booking.serviceTitle}.`,
+      userId:
+        req.customer.id,
+
+      userRole:
+        'customer',
+
+      title:
+        'Booking cancelled',
+
+      message:
+        `Your booking for ${booking.serviceTitle} was cancelled.`,
+
+      type:
+        'warning',
+
+      relatedEntityId:
+        booking._id,
+    }).catch(() => {});
+
+    return res.json({
+      success:
+        true,
+
+      message:
+        'Booking cancelled successfully.',
+
+      data: {
+        id:
+          booking._id,
+
+        status:
+          'cancelled',
+
+        serviceTitle:
+          booking.serviceTitle,
+      },
     });
-  }
-
-  return res.json({
-    success: true,
-    message: finalized
-      ? 'Booking completed successfully!'
-      : 'Marked as done on your side. Waiting for the worker to confirm.',
-    data: {
-      bookingId: booking._id,
-      status: booking.status,
-      customerMarkedDone: true,
-      workerMarkedDone: Boolean(booking.workerMarkedDone),
-      finalized,
-      workerEarnings: finalized ? workerEarnings : undefined,
-      serviceFee: finalized ? serviceFee : undefined,
-      rating,
-      newWorkerRating: finalized ? Number(newRating).toFixed(1) : undefined,
-    },
-  });
-}));
-
+  }),
+);
 export default router;

@@ -15,7 +15,7 @@ import geocodeRoutes from './geocode.js';
 import auditLogsRoutes from './auditLogs.js';
 import pushRoutes from './push.js';
 import publicConfigRoutes from './publicConfig.js';
-
+import aiRoutes from "./ai.js";
 const router = express.Router();
 
 router.use('/auth', authRoutes);
@@ -34,5 +34,5 @@ router.use('/app-reviews', appReviewRoutes);
 router.use('/geocode', geocodeRoutes);
 router.use('/push', pushRoutes);
 router.use('/public', publicConfigRoutes);
-
+router.use("/ai", aiRoutes);
 export default router;

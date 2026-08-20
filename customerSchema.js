@@ -18,21 +18,7 @@ const customerSchema = new mongoose.Schema({
   password: {
     type: String,
     minlength: 6,
-    required: function passwordRequired() {
-      return !this.googleId;
-    },
-  },
-  googleId: {
-    type: String,
-    default: null,
-    sparse: true,
-    unique: true,
-    trim: true,
-  },
-  authProvider: {
-    type: String,
-    enum: ["local", "google"],
-    default: "local",
+    required: true,
   },
   phone: {
     type: String,
@@ -154,7 +140,6 @@ customerSchema.methods.comparePassword = function (candidatePassword) {
 
 // Database indexes for performance optimization
 customerSchema.index({ email: 1 }, { unique: true });
-customerSchema.index({ googleId: 1 }, { unique: true, sparse: true });
 customerSchema.index({ status: 1, createdAt: -1 });
 customerSchema.index({ isActive: 1, isDeleted: 1 });
 customerSchema.index({ createdAt: -1 });

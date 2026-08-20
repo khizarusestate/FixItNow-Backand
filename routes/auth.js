@@ -41,10 +41,6 @@ import { validateFile, generateSecureFilename } from "../utils/fileValidation.js
 import { uploadsSubdir } from "../utils/uploadPaths.js";
 import { profilePictureUpload } from "../utils/profilePictureMulter.js";
 import { CUSTOMER_STATUS, WORKER_STATUS } from "../utils/constants.js";
-import {
-  verifyGoogleIdToken,
-  isGoogleAuthEnabled,
-} from "../services/googleAuth.js";
 import { resolveWorkerServiceFields, resolveWorkerServicesArray, applyWorkerServices } from "../utils/workerServiceFields.js";
 import { addEmailJob } from "../utils/emailQueue.js";
 import { getCache, setCache } from "../utils/cache.js";
@@ -107,8 +103,6 @@ function formatWorkerData(worker) {
     emailVerified: Boolean(worker.emailVerified),
     email: worker.email,
     phoneNumber: worker.phoneNumber,
-    authProvider: worker.authProvider || "local",
-    googleId: worker.googleId || null,
     cnicNumber: worker.cnicNumber,
     serviceCategory: worker.primaryServiceCategory,
     primaryServiceCategory: worker.primaryServiceCategory,
@@ -150,12 +144,6 @@ const generateResetCode = () => {
 
 const generateVerificationCode = generateResetCode;
 const VERIFY_EMAIL_COOLDOWN_SEC = 60;
-
-function readGoogleCredential(body = {}) {
-  const raw = body.credential ?? body.idToken ?? body.token;
-  if (typeof raw !== "string") return "";
-  return raw.trim();
-}
 
 async function sendVerificationEmailWithRetry(customer, code) {
   const jobId = await addEmailJob({
@@ -590,13 +578,6 @@ router.post(
         success: false,
         message: "No account found for this email. Please sign up first.",
         code: "ACCOUNT_NOT_FOUND",
-      });
-    }
-    if (!customer.password) {
-      return res.status(400).json({
-        success: false,
-        message: "This account uses Google sign-in. Please tap Continue with Google.",
-        code: "USE_GOOGLE_SIGNIN",
       });
     }
     if (!(await customer.comparePassword(password))) {
@@ -1239,7 +1220,6 @@ router.post(
       approvalStatus: "pending_approval", // Waiting for admin review
       signupStep: "complete",          // Single step signup complete
 
-      authProvider: "local",
       availability: false,             // Worker not available until approved
     });
 
@@ -1313,13 +1293,6 @@ router.post(
         code: "ACCOUNT_NOT_FOUND",
       });
     }
-    if (!worker.password) {
-      return res.status(400).json({
-        success: false,
-        message: "This account uses Google sign-in. Please tap Continue with Google.",
-        code: "USE_GOOGLE_SIGNIN",
-      });
-    }
     if (!(await worker.comparePassword(password))) {
       return res.status(401).json({
         success: false,
@@ -1328,7 +1301,7 @@ router.post(
       });
     }
 
-    if (worker.authProvider === "local" && !worker.emailVerified) {
+    if (!worker.emailVerified) {
       return res.status(403).json({
         success: false,
         message: "Verify your email before signing in.",
@@ -1619,138 +1592,6 @@ router.delete(
       success: true,
       message: "Account and all related data permanently deleted from database.",
     });
-  }),
-);
-
-// ─── POST /api/auth/google/customer ───────────────────────────────────────────
-router.post(
-  "/google/customer",
-  asyncHandler(async (req, res) => {
-    if (!isGoogleAuthEnabled()) {
-      return res.status(503).json({
-        success: false,
-        message: "Google sign-in is not configured on the server.",
-        code: "GOOGLE_NOT_CONFIGURED",
-      });
-    }
-
-    const { rememberMe } = req.body;
-    const credential = readGoogleCredential(req.body);
-    if (!credential) {
-      return res.status(400).json({
-        success: false,
-        message: "Google credential is required.",
-        code: "GOOGLE_CREDENTIAL_REQUIRED",
-      });
-    }
-
-    let payload;
-    try {
-      payload = await verifyGoogleIdToken(credential);
-    } catch (err) {
-      const status = err.code === "GOOGLE_NOT_CONFIGURED" ? 503 : 401;
-      return res.status(status).json({
-        success: false,
-        message: err.message || "Google sign-in failed.",
-        code: err.code || "GOOGLE_AUTH_FAILED",
-      });
-    }
-    const email = String(payload.email).toLowerCase().trim();
-    const googleId = String(payload.sub);
-    const fullName =
-      String(payload.name || "").trim() ||
-      email.split("@")[0] ||
-      "Customer";
-
-    const existingWorker = await Worker.findOne({
-      email: email,
-      isDeleted: false,
-    });
-    if (existingWorker) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "This email is registered as a worker. Use worker sign-in or a different email.",
-      });
-    }
-
-    let customer = await Customer.findOne({
-      $or: [{ googleId }, { email }],
-      isDeleted: false,
-    });
-
-    if (customer && customer.email !== email && customer.googleId !== googleId) {
-      return res.status(409).json({
-        success: false,
-        message: "This Google account cannot be linked. Contact support.",
-      });
-    }
-
-    if (!customer) {
-      customer = await Customer.create({
-        fullName,
-        email,
-        googleId,
-        authProvider: "google",
-        phone: "",
-        isVerified: true,
-        status: "active",
-      });
-      emitNotification("customers", "created", `New customer joined: ${customer.fullName}`);
-      emitRefresh("customers");
-      notifyAllAdmins({
-        title: "New customer",
-        message: `${customer.fullName} signed up with Google.`,
-        type: "info",
-        relatedEntityId: customer._id,
-      }).catch(() => {});
-    } else {
-      if (!customer.googleId) {
-        customer.googleId = googleId;
-        customer.authProvider = "google";
-      }
-      if (!customer.fullName?.trim()) customer.fullName = fullName;
-      customer.isVerified = true;
-      customer.lastActive = new Date();
-      if (customer.status !== "rejected") customer.status = "active";
-      await customer.save();
-    }
-
-    if (!customer.isActive) {
-      return res.status(403).json({
-        success: false,
-        message: "Your account has been deactivated. Please contact support.",
-      });
-    }
-
-    const tokenPayload = {
-      id: customer._id,
-      role: "customer",
-      email: customer.email,
-    };
-    const token = createToken(tokenPayload);
-
-    let refreshToken;
-    if (env.USE_REFRESH_TOKENS) {
-      refreshToken = await createRefreshToken(
-        customer._id,
-        "customer",
-        req,
-        refreshTokenExpiryDays(rememberMe),
-      );
-    }
-
-    return res.json(
-      attachAuthToResponse(res, {
-        accessToken: token,
-        refreshToken,
-        body: {
-          success: true,
-          message: "Signed in with Google.",
-          customer: formatCustomerData(customer),
-        },
-      }),
-    );
   }),
 );
 

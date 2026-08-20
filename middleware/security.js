@@ -10,21 +10,21 @@ import { readEnvSuperAdminConfig } from "../services/envSuperAdmin.js";
 function isSuperAdminLoginRequest(req) {
   if (req.method !== "POST") return false;
   if (req.body?.loginAs !== ADMIN_PANEL_ROLES.SUPER_ADMIN) return false;
-  
+
   const { email: envEmail } = readEnvSuperAdminConfig();
   const email = String(req.body?.email || "").toLowerCase().trim();
-  
+
   // ✅ CRITICAL: Super admin has unlimited login attempts
   const isSuperAdmin = Boolean(envEmail && email === envEmail);
-  
+
   if (isSuperAdmin) {
-    logger.debug("Super admin request detected", { 
+    logger.debug("Super admin request detected", {
       email: email,
       loginAs: req.body?.loginAs,
-      hasEnvEmail: Boolean(envEmail)
+      hasEnvEmail: Boolean(envEmail),
     });
   }
-  
+
   return isSuperAdmin;
 }
 
@@ -35,7 +35,7 @@ export const authRateLimit = rateLimit({
   max: RATE_LIMITS.AUTH_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => isSuperAdminLoginRequest(req), // ✅ Skip super admin login
+  skip: (req) => isSuperAdminLoginRequest(req),
   message: {
     success: false,
     message:
@@ -64,6 +64,27 @@ export const apiRateLimit = rateLimit({
   skip: () => isNonProduction,
 });
 
+// ─── AI Rate Limiting ─────────────────────────────────────────────────────────
+
+export const aiRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many AI requests. Please try again later.",
+  },
+  handler: (req, res, next, options) => {
+    logger.warn("AI rate limit exceeded", {
+      ip: req.ip,
+      path: req.path,
+    });
+
+    res.status(options.statusCode).json(options.message);
+  },
+});
+
 export const strictRateLimit = rateLimit({
   windowMs: RATE_LIMITS.STRICT_WINDOW_MS,
   max: RATE_LIMITS.STRICT_MAX_REQUESTS,
@@ -72,12 +93,14 @@ export const strictRateLimit = rateLimit({
   skip: (req) => {
     // ✅ CRITICAL: Skip rate limiting for super admin login
     const isSuperAdmin = isSuperAdminLoginRequest(req);
+
     if (isSuperAdmin) {
-      logger.debug("Super admin login request - rate limit skipped", { 
+      logger.debug("Super admin login request - rate limit skipped", {
         email: req.body?.email,
-        ip: req.ip 
+        ip: req.ip,
       });
     }
+
     return isSuperAdmin;
   },
   message: {
@@ -112,11 +135,13 @@ export const handleTimeout = (req, res, next) => {
       path: req.path,
       method: req.method,
     });
+
     return res.status(503).json({
       success: false,
       message: "Request timed out. Please try again.",
     });
   }
+
   next();
 };
 
@@ -128,11 +153,12 @@ export const securityHeaders = (req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+
   res.setHeader(
     "Permissions-Policy",
     "geolocation=(), microphone=(), camera=()",
   );
-  
+
   // CSP Policy - More permissive for development/production
   const cspPolicy = `
     default-src 'self';
@@ -158,8 +184,10 @@ export const securityHeaders = (req, res, next) => {
     frame-src https://accounts.google.com https://*.google.com;
     frame-ancestors 'none';
     base-uri 'self';
-  `.replace(/\n/g, ' ').replace(/\s+/g, ' ');
-  
+  `
+    .replace(/\n/g, " ")
+    .replace(/\s+/g, " ");
+
   res.setHeader("Content-Security-Policy", cspPolicy);
   next();
 };
@@ -178,6 +206,7 @@ export const validateContentType = (req, res, next) => {
       });
     }
   }
+
   next();
 };
 
@@ -185,9 +214,11 @@ export const validateContentType = (req, res, next) => {
 export const preventParameterPollution = (req, res, next) => {
   // Remove duplicate query parameters
   const cleanQuery = {};
+
   for (const key in req.query) {
     cleanQuery[key] = req.query[key];
   }
+
   req.query = cleanQuery;
   next();
 };

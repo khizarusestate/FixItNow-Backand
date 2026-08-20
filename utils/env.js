@@ -65,9 +65,6 @@ const env = cleanEnv(process.env, {
 
   ADMIN_FRONTEND_URL: str({ default: "https://fixitnow-admin.vercel.app" }),
 
-  /** Google OAuth Web client ID (same as VITE_GOOGLE_CLIENT_ID on frontend) */
-  GOOGLE_CLIENT_ID: str({ default: "" }),
-
   VAPID_PUBLIC_KEY: str({ default: "" }),
   VAPID_PRIVATE_KEY: str({ default: "" }),
   VAPID_SUBJECT: str({ default: "mailto:support@fixitnow.app" }),

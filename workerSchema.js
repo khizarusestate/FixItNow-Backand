@@ -33,21 +33,7 @@ const workerSchema = new mongoose.Schema({
   password: {
     type: String,
     minlength: 6,
-    required: function passwordRequired() {
-      return !this.googleId;
-    },
-  },
-  googleId: {
-    type: String,
-    default: null,
-    sparse: true,
-    unique: true,
-    trim: true,
-  },
-  authProvider: {
-    type: String,
-    enum: ["local", "google"],
-    default: "local",
+    required: true,
   },
   serviceCategories: [
     {

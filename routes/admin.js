@@ -1673,7 +1673,6 @@ router.post('/workers', requireAdmin, asyncHandler(async (req, res) => {
     approvedAt: new Date(),
     approvedBy: req.admin?.id || null,
     emailVerified: true,
-    authProvider: 'local',
     signupStep: 'complete',
   });
   applyWorkerServices(worker, [
