@@ -19,16 +19,25 @@ const storage = multer.diskStorage({
 });
 
 const imageFilter = (_req, file, cb) => {
-  const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-  if (!allowed.includes(file.mimetype)) {
-    return cb(new Error("Only JPEG, PNG, and WebP images are allowed"), false);
+  const allowed = new Set([
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/avif",
+  ]);
+  if (!allowed.has(file.mimetype)) {
+    return cb(new Error("Unsupported image format. Please upload a JPG, PNG, GIF, WebP, BMP, TIFF, or AVIF image."), false);
   }
   cb(null, true);
 };
 
 export const profilePictureUpload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: imageFilter,
 });
 
