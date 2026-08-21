@@ -70,9 +70,27 @@ const verificationPhotoUpload = multer({
     files: 3,
   },
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Verification documents must be images."), false);
+    const allowedImageMimes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "image/svg+xml",
+      "image/bmp",
+      "image/tiff",
+      "image/avif",
+    ];
+
+    if (!allowedImageMimes.includes(file.mimetype)) {
+      return cb(
+        new Error(
+          "Unsupported verification image format. Supported: JPG, JPEG, PNG, GIF, WebP, SVG, BMP, TIFF, and AVIF."
+        ),
+        false,
+      );
     }
+
     cb(null, true);
   },
 });
@@ -1168,6 +1186,34 @@ router.post(
         success: false,
         message:
           "Passport photo, CNIC front photo and CNIC back photo are required.",
+      });
+    }
+
+    // Validate all uploaded worker verification images.
+    const verificationFiles = [
+      verificationPhoto,
+      cnicFrontPhoto,
+      cnicBackPhoto,
+    ];
+
+    try {
+      for (const file of verificationFiles) {
+        await validateFile(
+          file.path,
+          file.originalname,
+          file.mimetype,
+        );
+      }
+    } catch (error) {
+      for (const file of verificationFiles) {
+        if (file.path && fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Invalid verification image.",
       });
     }
 

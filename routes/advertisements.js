@@ -24,6 +24,9 @@ const IMAGE_MIME_TYPES = new Set([
   'image/png',
   'image/gif',
   'image/webp',
+  'image/bmp',
+  'image/tiff',
+  'image/avif',
 ]);
 
 const VIDEO_MIME_TYPES = new Set([
@@ -168,11 +171,20 @@ router.post(
       if (!payAfterWork && !receipt) {
         throw new Error('Payment receipt is required for upfront payment.');
       }
-      if (receipt && receipt.size > 5 * 1024 * 1024) {
-        throw new Error('Payment receipt must be 5MB or smaller.');
+      if (receipt && receipt.size > 2 * 1024 * 1024) {
+        throw new Error('Payment receipt must be 2MB or smaller.');
       }
 
       const expectedMedia = adType === 'image' ? IMAGE_MIME_TYPES : VIDEO_MIME_TYPES;
+
+      if (adType === 'image') {
+        for (const file of adFiles) {
+          if (file.size > 2 * 1024 * 1024) {
+            throw new Error('Advertisement images must be 2MB or smaller.');
+          }
+        }
+      }
+
       for (const file of adFiles) {
         if (!expectedMedia.has(file.mimetype)) {
           throw new Error(`All advertisement files must be ${adType} files.`);

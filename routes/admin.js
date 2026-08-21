@@ -76,12 +76,28 @@ const adminProfileUpload = multer({
       cb(null, `admin-${secureName}`);
     },
   }),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const allowed = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/tiff',
+      'image/avif',
+    ];
+
     if (!allowed.includes(file.mimetype)) {
-      return cb(new Error('Only JPEG, JPG, PNG, and WebP images are allowed'), false);
+      return cb(
+        new Error(
+          'Unsupported image format. Supported: JPG, JPEG, PNG, GIF, WebP, BMP, TIFF, and AVIF.'
+        ),
+        false,
+      );
     }
+
     cb(null, true);
   },
 });

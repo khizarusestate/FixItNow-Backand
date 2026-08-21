@@ -86,21 +86,29 @@ const commissionReceiptStorage = multer.diskStorage({
 
 const commissionReceiptUpload = multer({
   storage: commissionReceiptStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = [
       "image/jpeg",
       "image/jpg",
       "image/png",
+      "image/gif",
       "image/webp",
+      "image/bmp",
+      "image/tiff",
+      "image/avif",
       "application/pdf",
     ];
+
     if (!allowed.includes(file.mimetype)) {
       return cb(
-        new Error("Receipt must be JPEG, PNG, WebP, or PDF."),
+        new Error(
+          "Unsupported receipt format. Supported images: JPG, JPEG, PNG, GIF, WebP, BMP, TIFF, AVIF, or PDF."
+        ),
         false,
       );
     }
+
     cb(null, true);
   },
 });

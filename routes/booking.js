@@ -173,38 +173,54 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedMimes = [
+  const allowedImageMimes = [
     'image/jpeg',
+    'image/jpg',
     'image/png',
     'image/gif',
-    'application/pdf',
+    'image/webp',
+    'image/bmp',
+    'image/tiff',
+    'image/avif',
   ];
 
-  const allowedExts = [
+  const allowedImageExts = [
     '.jpg',
     '.jpeg',
     '.png',
     '.gif',
-    '.pdf',
+    '.webp',
+    '.bmp',
+    '.tif',
+    '.tiff',
+    '.avif',
   ];
 
+  const ext = path.extname(file.originalname).toLowerCase();
+
   if (
-    allowedMimes.includes(file.mimetype) &&
-    allowedExts.includes(path.extname(file.originalname).toLowerCase())
+    allowedImageMimes.includes(file.mimetype) &&
+    allowedImageExts.includes(ext)
   ) {
-    cb(null, true);
-  } else {
-    cb(
-      new Error('Only image (JPG, PNG, GIF) or PDF files are allowed'),
-      false,
-    );
+    return cb(null, true);
   }
+
+  if (file.mimetype === 'application/pdf' && ext === '.pdf') {
+    return cb(null, true);
+  }
+
+  cb(
+    new Error(
+      'Unsupported receipt format. Supported images: JPG, JPEG, PNG, GIF, WebP, BMP, TIFF, AVIF, or PDF.'
+    ),
+    false,
+  );
 };
 
 const paymentReceiptUpload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: 2 * 1024 * 1024,
   },
   fileFilter,
 });
@@ -328,6 +344,21 @@ router.post(
   },
   asyncHandler(async (req, res) => {
     try {
+      if (
+        req.file &&
+        req.file.mimetype.startsWith('image/') &&
+        req.file.size > 2 * 1024 * 1024
+      ) {
+        if (req.file.path && fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+
+        return res.status(400).json({
+          success: false,
+          message: 'Payment receipt images must be 2MB or smaller.',
+        });
+      }
+
       const {
         serviceTitle,
         serviceId,

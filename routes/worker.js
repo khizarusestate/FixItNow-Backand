@@ -46,10 +46,26 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   try {
-    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const allowedMimes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/tiff',
+      'image/avif',
+    ];
+
     if (!allowedMimes.includes(file.mimetype)) {
-      return cb(new Error('Only JPEG, JPG, PNG, and WebP images are allowed'), false);
+      return cb(
+        new Error(
+          'Unsupported image format. Supported: JPG, JPEG, PNG, GIF, WebP, BMP, TIFF, and AVIF.'
+        ),
+        false,
+      );
     }
+
     cb(null, true);
   } catch (error) {
     cb(new Error('File validation failed'), false);
@@ -59,7 +75,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 2 * 1024 * 1024,
   },
   fileFilter
 });
