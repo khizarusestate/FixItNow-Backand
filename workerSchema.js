@@ -125,6 +125,16 @@ const workerSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  /** CNIC front image for admin identity verification. */
+  cnicFrontPhoto: {
+    type: String,
+    default: null,
+  },
+  /** CNIC back image for admin identity verification. */
+  cnicBackPhoto: {
+    type: String,
+    default: null,
+  },
   emailVerified: {
     type: Boolean,
     default: false,
