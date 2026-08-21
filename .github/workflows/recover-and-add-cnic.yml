@@ -1,0 +1,142 @@
+name: Recover auth and add worker CNIC uploads
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recover auth.js and apply CNIC upload changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          PARENT=1d691ce4aefccfb41cc2109a2d3f0b0502257624
+          git checkout "$PARENT" -- routes/auth.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('routes/auth.js')
+          s = p.read_text()
+
+          old = '''  filename: (req, file, cb) => {
+              cb(null, `verify-${generateSecureFilename(file.originalname, "worker")}`);
+            },'''
+          new = '''  filename: (req, file, cb) => {
+              const prefixes = {
+                verificationPhoto: "verify",
+                cnicFrontPhoto: "cnic-front",
+                cnicBackPhoto: "cnic-back",
+              };
+              cb(
+                null,
+                `${prefixes[file.fieldname] || "worker-doc"}-${generateSecureFilename(file.originalname, "worker")}`,
+              );
+            },'''
+          if old not in s: raise SystemExit('storage pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''const verificationPhotoUpload = multer({
+              storage: verificationPhotoStorage,
+              limits: { fileSize: 2 * 1024 * 1024 },
+              fileFilter: (req, file, cb) => {
+                if (!file.mimetype.startsWith("image/")) {
+                  return cb(new Error("Verification photo must be an image."), false);
+                }
+                cb(null, true);
+              },
+            });'''
+          new = '''const verificationPhotoUpload = multer({
+              storage: verificationPhotoStorage,
+              limits: { fileSize: 2 * 1024 * 1024, files: 3 },
+              fileFilter: (req, file, cb) => {
+                if (!["verificationPhoto", "cnicFrontPhoto", "cnicBackPhoto"].includes(file.fieldname)) {
+                  return cb(new Error("Unexpected worker document field."), false);
+                }
+                if (!file.mimetype.startsWith("image/")) {
+                  return cb(new Error("Worker verification documents must be images."), false);
+                }
+                cb(null, true);
+              },
+            });'''
+          if old not in s: raise SystemExit('multer pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    cnicNumber: worker.cnicNumber,
+    serviceCategory: worker.primaryServiceCategory,'''
+          new = '''    cnicNumber: worker.cnicNumber,
+    cnicFrontPhoto: worker.cnicFrontPhoto || null,
+    cnicBackPhoto: worker.cnicBackPhoto || null,
+    verificationPhoto: worker.verificationPhoto || null,
+    serviceCategory: worker.primaryServiceCategory,'''
+          if old not in s: raise SystemExit('worker formatter pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''  "/worker/register",
+  verificationPhotoUpload.single("verificationPhoto"),
+  asyncHandler(async (req, res) => {'''
+          new = '''  "/worker/register",
+  verificationPhotoUpload.fields([
+    { name: "verificationPhoto", maxCount: 1 },
+    { name: "cnicFrontPhoto", maxCount: 1 },
+    { name: "cnicBackPhoto", maxCount: 1 },
+  ]),
+  asyncHandler(async (req, res) => {'''
+          if old not in s: raise SystemExit('worker upload middleware pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    // Verify photo required
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Passport-size verification photo is required.",
+      });
+    }
+
+    // CNIC validation'''
+          new = '''    const verificationPhotoFile = req.files?.verificationPhoto?.[0];
+    const cnicFrontPhotoFile = req.files?.cnicFrontPhoto?.[0];
+    const cnicBackPhotoFile = req.files?.cnicBackPhoto?.[0];
+
+    // All three identity documents are required for new worker applications.
+    if (!verificationPhotoFile || !cnicFrontPhotoFile || !cnicBackPhotoFile) {
+      for (const file of [verificationPhotoFile, cnicFrontPhotoFile, cnicBackPhotoFile]) {
+        if (file?.path && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      }
+      return res.status(400).json({
+        success: false,
+        message: "Passport-size photo, CNIC front photo, and CNIC back photo are required.",
+      });
+    }
+
+    // CNIC validation'''
+          if old not in s: raise SystemExit('required photo pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''      verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,'''
+          new = '''      verificationPhoto: `/uploads/worker-verification/${verificationPhotoFile.filename}`,
+      cnicFrontPhoto: `/uploads/worker-verification/${cnicFrontPhotoFile.filename}`,
+      cnicBackPhoto: `/uploads/worker-verification/${cnicBackPhotoFile.filename}`,'''
+          if old not in s: raise SystemExit('worker photo assignment pattern not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+          rm -f .github/workflows/recover-and-add-cnic.yml
+          node --check routes/auth.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add routes/auth.js .github/workflows/recover-and-add-cnic.yml
+          git commit -m 'Add worker CNIC front and back uploads safely'
+          git push origin main
