@@ -28,111 +28,18 @@ jobs:
           from pathlib import Path
           p = Path('routes/auth.js')
           s = p.read_text()
-
-          old = '''  filename: (req, file, cb) => {
-              cb(null, `verify-${generateSecureFilename(file.originalname, "worker")}`);
-            },'''
-          new = '''  filename: (req, file, cb) => {
-              const prefixes = {
-                verificationPhoto: "verify",
-                cnicFrontPhoto: "cnic-front",
-                cnicBackPhoto: "cnic-back",
-              };
-              cb(
-                null,
-                `${prefixes[file.fieldname] || "worker-doc"}-${generateSecureFilename(file.originalname, "worker")}`,
-              );
-            },'''
-          if old not in s: raise SystemExit('storage pattern not found')
-          s = s.replace(old, new, 1)
-
-          old = '''const verificationPhotoUpload = multer({
-              storage: verificationPhotoStorage,
-              limits: { fileSize: 2 * 1024 * 1024 },
-              fileFilter: (req, file, cb) => {
-                if (!file.mimetype.startsWith("image/")) {
-                  return cb(new Error("Verification photo must be an image."), false);
-                }
-                cb(null, true);
-              },
-            });'''
-          new = '''const verificationPhotoUpload = multer({
-              storage: verificationPhotoStorage,
-              limits: { fileSize: 2 * 1024 * 1024, files: 3 },
-              fileFilter: (req, file, cb) => {
-                if (!["verificationPhoto", "cnicFrontPhoto", "cnicBackPhoto"].includes(file.fieldname)) {
-                  return cb(new Error("Unexpected worker document field."), false);
-                }
-                if (!file.mimetype.startsWith("image/")) {
-                  return cb(new Error("Worker verification documents must be images."), false);
-                }
-                cb(null, true);
-              },
-            });'''
-          if old not in s: raise SystemExit('multer pattern not found')
-          s = s.replace(old, new, 1)
-
-          old = '''    cnicNumber: worker.cnicNumber,
-    serviceCategory: worker.primaryServiceCategory,'''
-          new = '''    cnicNumber: worker.cnicNumber,
-    cnicFrontPhoto: worker.cnicFrontPhoto || null,
-    cnicBackPhoto: worker.cnicBackPhoto || null,
-    verificationPhoto: worker.verificationPhoto || null,
-    serviceCategory: worker.primaryServiceCategory,'''
-          if old not in s: raise SystemExit('worker formatter pattern not found')
-          s = s.replace(old, new, 1)
-
-          old = '''  "/worker/register",
-  verificationPhotoUpload.single("verificationPhoto"),
-  asyncHandler(async (req, res) => {'''
-          new = '''  "/worker/register",
-  verificationPhotoUpload.fields([
-    { name: "verificationPhoto", maxCount: 1 },
-    { name: "cnicFrontPhoto", maxCount: 1 },
-    { name: "cnicBackPhoto", maxCount: 1 },
-  ]),
-  asyncHandler(async (req, res) => {'''
-          if old not in s: raise SystemExit('worker upload middleware pattern not found')
-          s = s.replace(old, new, 1)
-
-          old = '''    // Verify photo required
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "Passport-size verification photo is required.",
-      });
-    }
-
-    // CNIC validation'''
-          new = '''    const verificationPhotoFile = req.files?.verificationPhoto?.[0];
-    const cnicFrontPhotoFile = req.files?.cnicFrontPhoto?.[0];
-    const cnicBackPhotoFile = req.files?.cnicBackPhoto?.[0];
-
-    // All three identity documents are required for new worker applications.
-    if (!verificationPhotoFile || !cnicFrontPhotoFile || !cnicBackPhotoFile) {
-      for (const file of [verificationPhotoFile, cnicFrontPhotoFile, cnicBackPhotoFile]) {
-        if (file?.path && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      }
-      return res.status(400).json({
-        success: false,
-        message: "Passport-size photo, CNIC front photo, and CNIC back photo are required.",
-      });
-    }
-
-    // CNIC validation'''
-          if old not in s: raise SystemExit('required photo pattern not found')
-          s = s.replace(old, new, 1)
-
-          old = '''      verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,'''
-          new = '''      verificationPhoto: `/uploads/worker-verification/${verificationPhotoFile.filename}`,
-      cnicFrontPhoto: `/uploads/worker-verification/${cnicFrontPhotoFile.filename}`,
-      cnicBackPhoto: `/uploads/worker-verification/${cnicBackPhotoFile.filename}`,'''
-          if old not in s: raise SystemExit('worker photo assignment pattern not found')
-          s = s.replace(old, new, 1)
-
+          replacements = [
+          ('''  filename: (req, file, cb) => {\n    cb(null, `verify-${generateSecureFilename(file.originalname, "worker")}`);\n  },''', '''  filename: (req, file, cb) => {\n    const prefixes = { verificationPhoto: "verify", cnicFrontPhoto: "cnic-front", cnicBackPhoto: "cnic-back" };\n    cb(null, `${prefixes[file.fieldname] || "worker-doc"}-${generateSecureFilename(file.originalname, "worker")}`);\n  },'''),
+          ('''  limits: { fileSize: 2 * 1024 * 1024 },\n  fileFilter: (req, file, cb) => {\n    if (!file.mimetype.startsWith("image/")) {\n      return cb(new Error("Verification photo must be an image."), false);\n    }''', '''  limits: { fileSize: 2 * 1024 * 1024, files: 3 },\n  fileFilter: (req, file, cb) => {\n    if (!["verificationPhoto", "cnicFrontPhoto", "cnicBackPhoto"].includes(file.fieldname)) {\n      return cb(new Error("Unexpected worker document field."), false);\n    }\n    if (!file.mimetype.startsWith("image/")) {\n      return cb(new Error("Worker verification documents must be images."), false);\n    }'''),
+          ('''    cnicNumber: worker.cnicNumber,\n    serviceCategory: worker.primaryServiceCategory,''', '''    cnicNumber: worker.cnicNumber,\n    cnicFrontPhoto: worker.cnicFrontPhoto || null,\n    cnicBackPhoto: worker.cnicBackPhoto || null,\n    verificationPhoto: worker.verificationPhoto || null,\n    serviceCategory: worker.primaryServiceCategory,'''),
+          ('''  "/worker/register",\n  verificationPhotoUpload.single("verificationPhoto"),''', '''  "/worker/register",\n  verificationPhotoUpload.fields([\n    { name: "verificationPhoto", maxCount: 1 },\n    { name: "cnicFrontPhoto", maxCount: 1 },\n    { name: "cnicBackPhoto", maxCount: 1 },\n  ]),'''),
+          ('''    // Verify photo required\n    if (!req.file) {\n      return res.status(400).json({\n        success: false,\n        message: "Passport-size verification photo is required.",\n      });\n    }''', '''    const verificationPhotoFile = req.files?.verificationPhoto?.[0];\n    const cnicFrontPhotoFile = req.files?.cnicFrontPhoto?.[0];\n    const cnicBackPhotoFile = req.files?.cnicBackPhoto?.[0];\n    if (!verificationPhotoFile || !cnicFrontPhotoFile || !cnicBackPhotoFile) {\n      for (const file of [verificationPhotoFile, cnicFrontPhotoFile, cnicBackPhotoFile]) {\n        if (file?.path && fs.existsSync(file.path)) fs.unlinkSync(file.path);\n      }\n      return res.status(400).json({ success: false, message: "Passport-size photo, CNIC front photo, and CNIC back photo are required." });\n    }'''),
+          ('''      verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,''', '''      verificationPhoto: `/uploads/worker-verification/${verificationPhotoFile.filename}`,\n      cnicFrontPhoto: `/uploads/worker-verification/${cnicFrontPhotoFile.filename}`,\n      cnicBackPhoto: `/uploads/worker-verification/${cnicBackPhotoFile.filename}`,''')]
+          for old, new in replacements:
+              if old not in s: raise SystemExit(f'pattern not found: {old[:60]}')
+              s = s.replace(old, new, 1)
           p.write_text(s)
           PY
-
           rm -f .github/workflows/recover-and-add-cnic.yml
           node --check routes/auth.js
           git config user.name 'github-actions[bot]'
