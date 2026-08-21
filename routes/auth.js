@@ -59,27 +59,16 @@ const verificationPhotoStorage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const prefixes = {
-      verificationPhoto: "verify",
-      cnicFrontPhoto: "cnic-front",
-      cnicBackPhoto: "cnic-back",
-    };
-    cb(
-      null,
-      `${prefixes[file.fieldname] || "worker-doc"}-${generateSecureFilename(file.originalname, "worker")}`,
-    );
+    cb(null, `verify-${generateSecureFilename(file.originalname, "worker")}`);
   },
 });
 
 const verificationPhotoUpload = multer({
   storage: verificationPhotoStorage,
-  limits: { fileSize: 2 * 1024 * 1024, files: 3 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!["verificationPhoto", "cnicFrontPhoto", "cnicBackPhoto"].includes(file.fieldname)) {
-      return cb(new Error("Unexpected worker document field."), false);
-    }
     if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Worker verification documents must be images."), false);
+      return cb(new Error("Verification photo must be an image."), false);
     }
     cb(null, true);
   },
@@ -115,9 +104,6 @@ function formatWorkerData(worker) {
     email: worker.email,
     phoneNumber: worker.phoneNumber,
     cnicNumber: worker.cnicNumber,
-    cnicFrontPhoto: worker.cnicFrontPhoto || null,
-    cnicBackPhoto: worker.cnicBackPhoto || null,
-    verificationPhoto: worker.verificationPhoto || null,
     serviceCategory: worker.primaryServiceCategory,
     primaryServiceCategory: worker.primaryServiceCategory,
     primaryServiceName: worker.primaryServiceName || "",
@@ -634,7 +620,24 @@ router.post(
       role: "customer",
       email: customer.email,
     };
-    const accessToken = createAccessToken(tokenPayload);
+    const token = createToken(tokenPayload);
+
+    customer.lastActive = new Date();
+    if (customer.status !== "rejected") {
+      customer.status = "active";
+    }
+    await customer.save();
+    emitRefresh("customers");
+
+    createNotification({
+      userId: customer._id,
+      userRole: "customer",
+      title: "Logged in",
+      message: `You're logged in FixItNow on ${new Date().toLocaleString()}.`,
+      type: "info",
+      deliverPush: false,
+    }).catch(() => {});
+
     let refreshToken;
     if (env.USE_REFRESH_TOKENS) {
       refreshToken = await createRefreshToken(
@@ -647,15 +650,12 @@ router.post(
 
     return res.json(
       attachAuthToResponse(res, {
-        accessToken,
+        accessToken: token,
         refreshToken,
         body: {
           success: true,
           message: "Login successful.",
-          customer: {
-            ...formatCustomerData(customer),
-            type: "customer",
-          },
+          customer: formatCustomerData(customer),
         },
       }),
     );
@@ -667,45 +667,932 @@ router.post(
   asyncHandler(async (req, res) => {
     const { email } = req.body;
     if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email is required." });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-    const found = await findUserByEmail(normalizedEmail);
+    const found = await findUserByEmail(email);
     if (!found) {
-      return res.status(404).json({
-        success: false,
-        message: "No account found for this email.",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Account not found." });
     }
 
     const { user, role } = found;
-    const code = generateResetCode();
-    const expires = new Date(Date.now() + 15 * 60 * 1000);
-    user.passwordResetCode = code;
-    user.passwordResetExpiresAt = expires;
+    const passwordResetCode = generateResetCode();
+    const passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    user.passwordResetCode = passwordResetCode;
+    user.passwordResetExpiresAt = passwordResetExpiresAt;
     await user.save();
 
-    const emailResult = await emailService.sendPasswordResetCode(
-      { email: user.email, fullName: user.fullName },
-      code,
-    );
-    if (!emailResult.success && !emailResult.skipped) {
-      return res.status(503).json({
-        success: false,
-        message: "Could not send reset code. Please try again shortly.",
-      });
-    }
+    logger.warn("Password reset email is disabled; code generated but not sent", {
+      email: getEmailForUser(user, role),
+    });
 
     return res.json({
       success: true,
-      message: "If the email exists, a password reset code has been sent.",
+      message: "Password reset code sent. Check your email.",
+    });
+  }),
+);
+
+router.post(
+  "/password/reset",
+  asyncHandler(async (req, res) => {
+    const { email, code, password } = req.body;
+    if (!email || !code || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, code, and new password are required.",
+      });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters.",
+      });
+    }
+
+    const found = await findUserByEmail(email);
+    if (!found) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Account not found." });
+    }
+
+    const { user, role } = found;
+    if (!user.passwordResetCode || !user.passwordResetExpiresAt) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "No password reset request found. Please request a reset code.",
+      });
+    }
+
+    if (user.passwordResetCode !== String(code).trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid password reset code." });
+    }
+
+    if (user.passwordResetExpiresAt < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Password reset code has expired. Please request a new code.",
+      });
+    }
+
+    user.password = password;
+    user.passwordResetCode = null;
+    user.passwordResetExpiresAt = null;
+    if (role === "customer" && user.status !== "rejected") {
+      user.status = "active";
+    }
+    await user.save();
+
+    return res.json({
+      success: true,
+      message:
+        "Password reset successfully. You can now login with your new password.",
     });
   }),
 );
 
 // ─── POST /api/auth/refresh ───────────────────────────────────────────────────
 router.post(
+  "/refresh",
+  asyncHandler(async (req, res) => {
+    const refreshToken = getRefreshTokenFromRequest(req);
+
+    if (!refreshToken) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Refresh token is required." });
+    }
+
+    try {
+      const {
+        verifyRefreshToken,
+        createAccessToken,
+        createRefreshToken,
+        revokeRefreshToken,
+      } = await import("../utils/jwt.js");
+      const record = await verifyRefreshToken(refreshToken);
+
+      let user;
+      if (record.userRole === "customer") {
+        user = await Customer.findById(record.userId);
+      } else if (record.userRole === "worker") {
+        user = await Worker.findById(record.userId);
+      } else if (record.userRole === "admin") {
+        const {
+          ENV_SUPER_ADMIN_ID,
+          isEnvSuperAdminConfigured,
+          getEnvSuperAdminProfile,
+        } = await import("../services/envSuperAdmin.js");
+        const { ADMIN_PANEL_ROLES } = await import("../middleware/adminRoles.js");
+
+        if (String(record.userId) === ENV_SUPER_ADMIN_ID) {
+          if (!isEnvSuperAdminConfigured()) {
+            await revokeRefreshToken(refreshToken);
+            return res.status(503).json({
+              success: false,
+              message: "Super admin is not configured on the server.",
+            });
+          }
+          const profile = getEnvSuperAdminProfile();
+          const payload = {
+            id: ENV_SUPER_ADMIN_ID,
+            role: "super_admin",
+            email: profile.email,
+          };
+          const newAccessToken = createAccessToken(payload);
+          const newRefreshToken = await createRefreshToken(
+            ENV_SUPER_ADMIN_ID,
+            record.userRole,
+            req,
+            refreshTokenDaysFromRecord(record),
+          );
+          await revokeRefreshToken(refreshToken);
+          return res.json(
+            attachAuthToResponse(res, {
+              accessToken: newAccessToken,
+              refreshToken: newRefreshToken,
+              body: {
+                success: true,
+                message: "Token refreshed successfully.",
+              },
+            }),
+          );
+        }
+
+        const Admin = (await import("../models/Admin.js")).default;
+        user = await Admin.findById(record.userId);
+        if (!user) {
+          return res
+            .status(401)
+            .json({ success: false, message: "Account not found." });
+        }
+        if (user.isActive === false) {
+          await revokeRefreshToken(refreshToken);
+          return res.status(403).json({
+            success: false,
+            message: "Account has been deactivated.",
+          });
+        }
+        const payload = {
+          id: user._id,
+          role: "admin",
+          email: user.email,
+        };
+        const newAccessToken = createAccessToken(payload);
+        const newRefreshToken = await createRefreshToken(
+          user._id,
+          record.userRole,
+          req,
+          refreshTokenDaysFromRecord(record),
+        );
+        await revokeRefreshToken(refreshToken);
+        return res.json(
+          attachAuthToResponse(res, {
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            body: {
+              success: true,
+              message: "Token refreshed successfully.",
+            },
+          }),
+        );
+      }
+
+      if (!user) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Account not found." });
+      }
+
+      // Check if user is still active
+      if (user.isActive === false) {
+        await revokeRefreshToken(refreshToken);
+        return res
+          .status(403)
+          .json({ success: false, message: "Account has been deactivated." });
+      }
+
+      if (user.status === "rejected") {
+        await revokeRefreshToken(refreshToken);
+        return res
+          .status(403)
+          .json({ success: false, message: "Account has been rejected." });
+      }
+
+      const payload = {
+        id: user._id,
+        role: record.userRole,
+        email:
+          record.userRole === "customer"
+            ? user.email
+            : record.userRole === "worker"
+              ? user.email
+              : user.email,
+      };
+
+      const newAccessToken = createAccessToken(payload);
+
+      // Token rotation: issue new refresh token and revoke old one
+      const newRefreshToken = await createRefreshToken(
+        user._id,
+        record.userRole,
+        req,
+        refreshTokenDaysFromRecord(record),
+      );
+      await revokeRefreshToken(refreshToken);
+
+      logger.info("Token rotated successfully", {
+        userId: user._id,
+        userRole: record.userRole,
+        ip: req.ip,
+      });
+
+      return res.json(
+        attachAuthToResponse(res, {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          body: {
+            success: true,
+            message: "Token refreshed successfully.",
+          },
+        }),
+      );
+    } catch (err) {
+      logger.warn("Refresh token failed", { error: err.message, ip: req.ip });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid or expired refresh token." });
+    }
+  }),
+);
+
+// ─── POST /api/auth/logout ─────────────────────────────────────────────────────
+router.post(
+  "/logout",
+  asyncHandler(async (req, res) => {
+    const { refreshToken, userId, userRole } = req.body;
+
+    // Revoke specific refresh token if provided
+    if (refreshToken) {
+      try {
+        const { revokeRefreshToken } = await import("../utils/jwt.js");
+        await revokeRefreshToken(refreshToken);
+        logger.info("Refresh token revoked on logout", { ip: req.ip });
+      } catch (err) {
+        logger.warn("Logout refresh token revocation failed", {
+          error: err.message,
+        });
+      }
+    }
+
+    // Revoke all refresh tokens for user if userId and userRole provided (more secure)
+    if (userId && userRole) {
+      try {
+        const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
+        await revokeAllUserRefreshTokens(userId, userRole);
+        logger.info("All refresh tokens revoked for user on logout", {
+          userId,
+          userRole,
+          ip: req.ip,
+        });
+      } catch (err) {
+        logger.warn("Logout all tokens revocation failed", {
+          error: err.message,
+        });
+      }
+    }
+
+    clearAuthCookies(res);
+    return res.json({ success: true, message: "Logged out successfully." });
+  }),
+);
+
+// ─── PUT /api/auth/customer/profile ───────────────────────────────────────────
+router.put(
+  "/customer/profile",
+  requireCustomer,
+  asyncHandler(async (req, res) => {
+    const { fullName, email, phone, profilePicture } = req.body;
+
+    const updateFields = {};
+    if (fullName !== undefined) updateFields.fullName = fullName;
+    if (email !== undefined) {
+      const normalizedEmail = String(email).toLowerCase().trim();
+      const existingCustomer = await Customer.findOne({
+        email: normalizedEmail,
+        _id: { $ne: req.customer.id },
+        isDeleted: false,
+      });
+      if (existingCustomer) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already registered to another customer account.",
+        });
+      }
+      const existingWorker = await Worker.findOne({
+        email: normalizedEmail,
+        isDeleted: false,
+      });
+      if (existingWorker) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already registered as a worker account.",
+        });
+      }
+      updateFields.email = normalizedEmail;
+    }
+    if (phone !== undefined) updateFields.phone = phone;
+    applyLocationUpdate(updateFields, req.body);
+    if (profilePicture !== undefined) {
+      if (
+        typeof profilePicture === "string" &&
+        profilePicture.startsWith("data:image")
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Profile photos must be uploaded via POST /auth/customer/profile-picture (file too large for JSON).",
+        });
+      }
+      updateFields.profilePicture = profilePicture;
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      req.customer.id,
+      updateFields,
+      { new: true, runValidators: true },
+    ).select("-password -bookings");
+
+    if (!customer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Customer not found." });
+    }
+
+    // Notify admin of profile update
+    emitRefresh("customers");
+
+    return res.json({
+      success: true,
+      message: "Profile updated successfully.",
+      data: formatCustomerData(customer),
+    });
+  }),
+);
+
+// ─── POST /api/auth/customer/profile-picture ───────────────────────────────────
+router.post(
+  "/customer/profile-picture",
+  requireCustomer,
+  profilePictureUpload.single("profilePicture"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded." });
+    }
+
+    try {
+      await validateFile(req.file.path, req.file.originalname, req.file.mimetype);
+    } catch (validationError) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        success: false,
+        message: `File validation failed: ${validationError.message}`,
+      });
+    }
+
+    const customer = await Customer.findById(req.customer.id);
+    if (!customer) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res
+        .status(404)
+        .json({ success: false, message: "Customer not found." });
+    }
+
+    if (customer.profilePicture) {
+      const oldPath = path.join(__dirname, "..", customer.profilePicture);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+
+    customer.profilePicture = `/uploads/profile-pictures/${req.file.filename}`;
+    await customer.save();
+
+    emitRefresh("customers");
+    const data = formatCustomerData(customer);
+
+    return res.json({
+      success: true,
+      message: "Profile picture uploaded successfully.",
+      data,
+    });
+  }),
+);
+
+// ─── POST /api/auth/worker/register (single form — all fields) ─────────────────
+router.post(
+  "/worker/register",
+  verificationPhotoUpload.single("verificationPhoto"),
+  asyncHandler(async (req, res) => {
+    const {
+      fullName,
+      email: emailAddress,
+      password,
+      phoneNumber,
+      cnicNumber,
+    } = req.body;
+
+    // Validate required fields
+    const fullNameStr = String(fullName || "").trim();
+    const emailStr = String(emailAddress || "").trim().toLowerCase();
+    const passwordStr = String(password || "").trim();
+    const phoneStr = String(phoneNumber || "").trim();
+    const cnicStr = String(cnicNumber || "").trim();
+
+    if (!fullNameStr || !emailStr || !passwordStr || !phoneStr || !cnicStr) {
+      return res.status(400).json({
+        success: false,
+        message: "Full name, email, password, phone number, and CNIC are required.",
+      });
+    }
+
+    if (passwordStr.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters.",
+      });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    // Verify photo required
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Passport-size verification photo is required.",
+      });
+    }
+
+    // CNIC validation
+    const cnicClean = String(cnicStr).replace(/-/g, "");
+    if (!/^\d{13}$/.test(cnicClean)) {
+      return res.status(400).json({
+        success: false,
+        message: "CNIC must be 13 digits.",
+      });
+    }
+
+    // Check email uniqueness
+    const existingWorker = await Worker.findOne({
+      email: emailStr,
+      isDeleted: false,
+    });
+    if (existingWorker) {
+      return res.status(409).json({
+        success: false,
+        message: "A worker with this email already exists.",
+      });
+    }
+
+    const existingCustomer = await Customer.findOne({
+      email: emailStr,
+      isDeleted: false,
+    });
+    if (existingCustomer) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is registered as a customer. Use a different email for worker signup.",
+      });
+    }
+
+    // Check CNIC uniqueness
+    const cnicStored = normalizeCnic(cnicStr);
+    const duplicateCnic = await Worker.findOne({
+      cnicNumber: cnicStored,
+      isDeleted: false,
+    });
+    if (duplicateCnic) {
+      return res.status(409).json({
+        success: false,
+        message: "This CNIC is already registered.",
+      });
+    }
+
+    // Resolve services/trades
+    const services = await resolveWorkerServicesArray(req.body);
+    if (services.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one service/trade is required.",
+      });
+    }
+
+    // Build worker with single signup - all data collected.
+    // IMPORTANT: primaryServiceCategory is required whenever signupStep === "complete",
+    // so services must be resolved and applied BEFORE the doc is validated/saved.
+    // Worker.create() validates immediately, before there's a chance to backfill
+    // primaryServiceCategory from the services array — use new Worker() + one save() instead.
+    const worker = new Worker({
+      fullName: fullNameStr,
+      email: emailStr,
+      password: passwordStr,
+      phoneNumber: phoneStr,
+      cnicNumber: cnicStored,
+      emailVerified: true,  // Email verified by signup form
+      verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,
+
+      // NEW: Approval workflow
+      status: "inactive",              // Cannot login
+      approvalStatus: "pending_approval", // Waiting for admin review
+      signupStep: "complete",          // Single step signup complete
+
+      availability: false,             // Worker not available until approved
+    });
+
+    // Apply resolved services (sets primaryServiceCategory/primaryServiceId/primaryServiceName)
+    applyWorkerServices(worker, services);
+
+    // Handle location if provided
+    applyLocationUpdate(worker, req.body);
+
+    await worker.save();
+
+    // Notify all admins of pending worker approval
+    emitNotification(
+      "workers",
+      "pending_approval",
+      `New worker pending approval: ${worker.fullName}`,
+    );
+    
+    notifyAdminNewWorker(worker).catch(() => {});
+
+    return res.status(201).json({
+      success: true,
+      message: "Application submitted successfully! Please wait for admin approval. You'll receive an email once your account is approved.",
+      data: {
+        email: worker.email,
+        fullName: worker.fullName,
+        approvalStatus: worker.approvalStatus,
+        message: "Your account is pending admin approval",
+      },
+    });
+  }),
+);
+
+// ─── POST /api/auth/worker/login ──────────────────────────────────────────────
+router.post(
+  "/worker/login",
+  asyncHandler(async (req, res) => {
+    const { emailAddress, password, rememberMe } = req.body;
+
+    // Input validation and sanitization
+    if (!emailAddress || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password are required." });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailAddress) || emailAddress.length > 254) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Valid email address is required." });
+    }
+
+    // Password validation
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long.",
+      });
+    }
+
+    const worker = await Worker.findOne({
+      email: emailAddress.toLowerCase().trim(),
+      isDeleted: false,
+    });
+    if (!worker) {
+      return res.status(401).json({
+        success: false,
+        message: "No account found for this email. Please sign up first.",
+        code: "ACCOUNT_NOT_FOUND",
+      });
+    }
+    if (!(await worker.comparePassword(password))) {
+      return res.status(401).json({
+        success: false,
+        message: "Incorrect password.",
+        code: "INVALID_PASSWORD",
+      });
+    }
+
+    if (!worker.emailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Verify your email before signing in.",
+        code: "EMAIL_NOT_VERIFIED",
+      });
+    }
+
+    // NEW: Check admin approval status
+    if (worker.approvalStatus === "pending_approval") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is pending admin approval. Please wait for verification and check your email.",
+        code: "PENDING_APPROVAL",
+      });
+    }
+
+    if (worker.approvalStatus === "rejected") {
+      return res.status(403).json({
+        success: false,
+        message: `Your account has been rejected${worker.rejectionReason ? ': ' + worker.rejectionReason : ''}. Please contact support.`,
+        code: "ACCOUNT_REJECTED",
+      });
+    }
+
+    // Check if admin-approved status
+    if (worker.approvalStatus !== "approved") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account cannot login at this time. Please contact support.",
+        code: "ACCOUNT_NOT_ACTIVE",
+      });
+    }
+
+    if (worker.isDisabled) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been disabled by an administrator. Please contact support.",
+        code: "ACCOUNT_DISABLED",
+      });
+    }
+
+    const tokenPayload = {
+      id: worker._id,
+      role: "worker",
+      email: worker.email,
+    };
+    const token = createToken(tokenPayload);
+
+    worker.lastActive = new Date();
+    await worker.save();
+    emitRefresh("workers");
+
+    createNotification({
+      userId: worker._id,
+      userRole: "worker",
+      title: "Logged in",
+      message: `You're logged in FixItNow on ${new Date().toLocaleString()}.`,
+      type: "info",
+      deliverPush: false,
+    }).catch(() => {});
+
+    let refreshToken;
+    if (env.USE_REFRESH_TOKENS) {
+      refreshToken = await createRefreshToken(
+        worker._id,
+        "worker",
+        req,
+        refreshTokenExpiryDays(rememberMe),
+      );
+    }
+
+    return res.json(
+      attachAuthToResponse(res, {
+        accessToken: token,
+        refreshToken,
+        body: {
+          success: true,
+          message: "Login successful.",
+          worker: formatWorkerData(worker),
+        },
+      }),
+    );
+  }),
+);
+
+// ─── PUT /api/auth/worker/profile ───────────────────────────────────────────────
+router.put(
+  "/worker/profile",
+  requireWorker,
+  asyncHandler(async (req, res) => {
+    const {
+      fullName,
+      emailAddress,
+      phoneNumber,
+      primaryServiceCategory,
+      profilePicture,
+      availability,
+    } = req.body;
+
+    const updateFields = {};
+    if (fullName !== undefined) updateFields.fullName = fullName;
+    if (emailAddress !== undefined) {
+      const email = emailAddress.toLowerCase().trim();
+      const existingWorker = await Worker.findOne({
+        email: email,
+        _id: { $ne: req.worker.id },
+      });
+      if (existingWorker) {
+        return res.status(409).json({
+          success: false,
+          message: "Worker with this email already exists.",
+        });
+      }
+      const existingCustomer = await Customer.findOne({ email });
+      if (existingCustomer) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already registered as a customer.",
+        });
+      }
+      updateFields.emailAddress = email;
+    }
+    if (phoneNumber !== undefined) updateFields.phoneNumber = phoneNumber;
+    if (
+      req.body.primaryServiceId !== undefined ||
+      req.body.primaryServiceName !== undefined ||
+      primaryServiceCategory !== undefined
+    ) {
+      const serviceFields = await resolveWorkerServiceFields(req.body);
+      if (serviceFields.primaryServiceCategory) {
+        updateFields.primaryServiceCategory = serviceFields.primaryServiceCategory;
+      }
+      if (serviceFields.primaryServiceName !== undefined) {
+        updateFields.primaryServiceName = serviceFields.primaryServiceName;
+      }
+      if (serviceFields.primaryServiceId !== undefined) {
+        updateFields.primaryServiceId = serviceFields.primaryServiceId;
+      }
+    }
+    applyLocationUpdate(updateFields, req.body);
+    if (profilePicture !== undefined)
+      updateFields.profilePicture = profilePicture;
+    if (availability !== undefined) updateFields.availability = availability;
+
+    const worker = await Worker.findByIdAndUpdate(req.worker.id, updateFields, {
+      new: true,
+      runValidators: true,
+    }).select("-password -jobs");
+
+    if (!worker) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Worker not found." });
+    }
+
+    const payload = { ...formatWorkerData(worker), type: "worker" };
+
+    // Notify admin of profile update
+    emitRefresh("workers");
+    emitToUser(String(worker._id), "profile-updated", payload);
+
+    return res.json({
+      success: true,
+      message: "Profile updated successfully.",
+      data: payload,
+    });
+  }),
+);
+
+// ─── DELETE /api/auth/customer/delete-account ───────────────────────────────────
+router.delete(
+  "/customer/delete-account",
+  requireCustomer,
+  asyncHandler(async (req, res) => {
+    const customerId = req.customer.id;
+
+    // Get customer details for notification
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Customer not found." });
+    }
+
+    // Revoke all refresh tokens for this customer
+    try {
+      const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
+      await revokeAllUserRefreshTokens(customerId, "customer");
+    } catch (err) {
+      logger.warn("Failed to revoke refresh tokens on account deletion", {
+        error: err.message,
+      });
+    }
+
+    // Delete all related data
+    await Promise.all([
+      Booking.deleteMany({ customerId }),           // Hard delete bookings
+      Review.deleteMany({ customerId }),            // Hard delete reviews
+      Notification.deleteMany({ userId: customerId }),
+      Advertisement.deleteMany({ customerId }),    // Hard delete ads
+      PushSubscription.deleteMany({ userId: customerId, userRole: "customer" }),
+    ]);
+    
+    // HARD DELETE - Remove customer account completely from database
+    await Customer.findByIdAndDelete(customerId);
+
+    // Notify admin
+    emitNotification(
+      "customers",
+      "deleted",
+      `Customer account permanently deleted: ${customer.fullName}`,
+    );
+    emitRefresh("customers");
+
+    // Audit log
+    await logAudit({ 
+      admin: { id: customerId },
+      user: { id: customerId }
+    }, 'customer_self_delete', 'customer', customerId, {
+      fullName: customer.fullName,
+      email: customer.email,
+      permanentDelete: true
+    });
+
+    return res.json({
+      success: true,
+      message: "Account and all related data permanently deleted from database.",
+    });
+  }),
+);
+
+// ─── DELETE /api/auth/worker/delete-account ─────────────────────────────────────
+router.delete(
+  "/worker/delete-account",
+  requireWorker,
+  asyncHandler(async (req, res) => {
+    const workerId = req.worker.id;
+
+    // Get worker details for notification
+    const worker = await Worker.findById(workerId);
+    if (!worker) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Worker not found." });
+    }
+
+    // Revoke all refresh tokens for this worker
+    try {
+      const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
+      await revokeAllUserRefreshTokens(workerId, "worker");
+    } catch (err) {
+      logger.warn("Failed to revoke refresh tokens on account deletion", {
+        error: err.message,
+      });
+    }
+
+    // Delete all related data
+    await Promise.all([
+      Booking.deleteMany({ workerId }),            // Hard delete bookings
+      Review.deleteMany({ workerId }),             // Hard delete reviews
+      Notification.deleteMany({ userId: workerId }),
+      Advertisement.deleteMany({ workerId }),      // Hard delete ads
+      PushSubscription.deleteMany({ userId: workerId, userRole: "worker" }),
+    ]);
+    
+    // HARD DELETE - Remove worker account completely from database
+    await Worker.findByIdAndDelete(workerId);
+
+    // Notify admin
+    emitNotification(
+      "workers",
+      "deleted",
+      `Worker account permanently deleted: ${worker.fullName}`,
+    );
+    emitRefresh("workers");
+
+    // Audit log
+    await logAudit({ 
+      admin: { id: workerId },
+      user: { id: workerId }
+    }, 'worker_self_delete', 'worker', workerId, {
+      fullName: worker.fullName,
+      email: worker.email,
+      permanentDelete: true
+    });
+
+    return res.json({
+      success: true,
+      message: "Account and all related data permanently deleted from database.",
+    });
+  }),
+);
+
+export default router;
