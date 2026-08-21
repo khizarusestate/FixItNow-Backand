@@ -1,9 +1,10 @@
 import fs from "fs";
 import path from "path";
 
+export const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
+
 // Magic byte signatures for common file types
 const MAGIC_BYTES = {
-  // Images
   "image/jpeg": [0xff, 0xd8, 0xff],
   "image/jpg": [0xff, 0xd8, 0xff],
   "image/png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
@@ -12,15 +13,13 @@ const MAGIC_BYTES = {
   "image/svg+xml": null,
   "image/bmp": [0x42, 0x4d],
   "image/tiff": [0x49, 0x49, 0x2a, 0x00],
-
-  // Videos
+  "image/avif": null,
   "video/mp4": [0x00, 0x00, 0x00, null, 0x66, 0x74, 0x79, 0x70],
   "video/webm": [0x1a, 0x45, 0xdf, 0xa3],
   "video/quicktime": [0x00, 0x00, 0x00, null, 0x66, 0x74, 0x79, 0x70],
   "application/pdf": [0x25, 0x50, 0x44, 0x46],
 };
 
-// Allowed MIME types
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
   "image/jpg",
@@ -29,13 +28,14 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/webp",
   "image/svg+xml",
   "image/bmp",
+  "image/tiff",
+  "image/avif",
   "video/mp4",
   "video/webm",
   "video/quicktime",
   "application/pdf",
 ]);
 
-// Allowed file extensions
 const ALLOWED_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -44,11 +44,35 @@ const ALLOWED_EXTENSIONS = new Set([
   ".webp",
   ".svg",
   ".bmp",
+  ".tif",
+  ".tiff",
+  ".avif",
   ".mp4",
   ".webm",
   ".mov",
   ".pdf",
 ]);
+
+const EXT_TO_MIME = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".avif": "image/avif",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".pdf": "application/pdf",
+};
+
+const IMAGE_MIME_TYPES = new Set(
+  [...ALLOWED_MIME_TYPES].filter((mime) => mime.startsWith("image/")),
+);
 
 export const validateExtension = (filename) => {
   const ext = path.extname(filename).toLowerCase();
@@ -74,7 +98,7 @@ const readMagicBytes = (filePath, byteCount = 12) => {
 };
 
 export const validateMagicBytes = (filePath, mimeType) => {
-  if (mimeType === "image/svg+xml" || mimeType === "video/quicktime") return true;
+  if (mimeType === "image/svg+xml" || mimeType === "image/avif" || mimeType === "video/quicktime") return true;
 
   const expectedBytes = MAGIC_BYTES[mimeType];
   if (!expectedBytes) return true;
@@ -96,26 +120,25 @@ export const validateFile = async (filePath, filename, mimeType) => {
   const ext = validateExtension(filename);
   validateMimeType(mimeType);
 
-  const extToMime = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".bmp": "image/bmp",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mov": "video/quicktime",
-    ".pdf": "application/pdf",
-  };
-
-  if (extToMime[ext] !== mimeType) {
+  if (EXT_TO_MIME[ext] !== mimeType) {
     throw new Error(`File extension ${ext} does not match MIME type ${mimeType}`);
   }
 
   validateMagicBytes(filePath, mimeType);
   return true;
+};
+
+export const validateImageFile = async (filePath, filename, mimeType) => {
+  if (!IMAGE_MIME_TYPES.has(mimeType)) {
+    throw new Error(`Unsupported image format: ${mimeType}`);
+  }
+
+  const stats = await fs.promises.stat(filePath);
+  if (stats.size > MAX_IMAGE_SIZE_BYTES) {
+    throw new Error("Image must be 2 MB or smaller.");
+  }
+
+  return validateFile(filePath, filename, mimeType);
 };
 
 export const generateSecureFilename = (originalFilename, userId = null) => {
