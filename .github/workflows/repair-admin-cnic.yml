@@ -1,14 +1,15 @@
 name: Repair admin worker CNIC API
+
 on:
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/repair-admin-cnic.yml'
+
 permissions:
   contents: write
+
 jobs:
   repair:
-    if: ${{ github.event.head_commit.message != 'fix: restore admin route and expose worker CNIC docs' }}
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +34,8 @@ jobs:
           git diff --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -- routes/admin.js
+          rm .github/workflows/repair-admin-cnic.yml
+          rm -f .github/workflows/repair-admin-cnic.yml.disabled
+          git add -- routes/admin.js .github/workflows/repair-admin-cnic.yml .github/workflows/repair-admin-cnic.yml.disabled
           git commit -m 'fix: restore admin route and expose worker CNIC docs'
           git push origin HEAD:main
