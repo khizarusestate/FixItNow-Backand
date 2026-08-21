@@ -65,10 +65,13 @@ const verificationPhotoStorage = multer.diskStorage({
 
 const verificationPhotoUpload = multer({
   storage: verificationPhotoStorage,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: {
+    fileSize: 2 * 1024 * 1024,
+    files: 3,
+  },
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Verification photo must be an image."), false);
+      return cb(new Error("Verification documents must be images."), false);
     }
     cb(null, true);
   },
@@ -1101,7 +1104,11 @@ router.post(
 // ─── POST /api/auth/worker/register (single form — all fields) ─────────────────
 router.post(
   "/worker/register",
-  verificationPhotoUpload.single("verificationPhoto"),
+  verificationPhotoUpload.fields([
+    { name: "verificationPhoto", maxCount: 1 },
+    { name: "cnicFrontPhoto", maxCount: 1 },
+    { name: "cnicBackPhoto", maxCount: 1 },
+  ]),
   asyncHandler(async (req, res) => {
     const {
       fullName,
@@ -1139,11 +1146,28 @@ router.post(
       });
     }
 
-    // Verify photo required
-    if (!req.file) {
+    const verificationPhoto = req.files?.verificationPhoto?.[0];
+    const cnicFrontPhoto = req.files?.cnicFrontPhoto?.[0];
+    const cnicBackPhoto = req.files?.cnicBackPhoto?.[0];
+
+    // All three verification documents are required.
+    if (!verificationPhoto || !cnicFrontPhoto || !cnicBackPhoto) {
+      const uploadedFiles = [
+        verificationPhoto,
+        cnicFrontPhoto,
+        cnicBackPhoto,
+      ].filter(Boolean);
+
+      for (const file of uploadedFiles) {
+        if (file.path && fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+      }
+
       return res.status(400).json({
         success: false,
-        message: "Passport-size verification photo is required.",
+        message:
+          "Passport photo, CNIC front photo and CNIC back photo are required.",
       });
     }
 
@@ -1213,7 +1237,9 @@ router.post(
       phoneNumber: phoneStr,
       cnicNumber: cnicStored,
       emailVerified: true,  // Email verified by signup form
-      verificationPhoto: `/uploads/worker-verification/${req.file.filename}`,
+      verificationPhoto: `/uploads/worker-verification/${verificationPhoto.filename}`,
+      cnicFrontPhoto: `/uploads/worker-verification/${cnicFrontPhoto.filename}`,
+      cnicBackPhoto: `/uploads/worker-verification/${cnicBackPhoto.filename}`,
 
       // NEW: Approval workflow
       status: "inactive",              // Cannot login
