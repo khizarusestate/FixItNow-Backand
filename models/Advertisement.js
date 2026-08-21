@@ -2,6 +2,106 @@ import mongoose from 'mongoose';
 
 const advertisementSchema = new mongoose.Schema(
   {
+    // New paid advertisement flow
+    name: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: '',
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 254,
+      default: '',
+    },
+    phone: {
+      type: String,
+      trim: true,
+      maxlength: 30,
+      default: '',
+    },
+    purpose: {
+      type: String,
+      trim: true,
+      minlength: 1,
+      maxlength: 500,
+      default: '',
+    },
+    duration: {
+      type: String,
+      enum: ['24 hours', '3 days', '1 week', '2 weeks', '1 month'],
+      default: '1 week',
+    },
+    price: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    adType: {
+      type: String,
+      enum: ['image', 'video'],
+      default: 'image',
+    },
+    adFileUrls: {
+      type: [String],
+      default: [],
+    },
+    paymentMethod: {
+      type: String,
+      enum: ['jazzcash', 'bank-transfer', 'pay-after-work', ''],
+      default: '',
+    },
+    payAfterWork: {
+      type: Boolean,
+      default: false,
+    },
+    paymentReference: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: '',
+    },
+    paymentReceiptUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending',
+    },
+    paymentSubmittedAt: {
+      type: Date,
+      default: null,
+    },
+    paymentReviewedAt: {
+      type: Date,
+      default: null,
+    },
+    paymentReviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
+      default: null,
+    },
+    submitterId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+      index: true,
+    },
+    submitterType: {
+      type: String,
+      enum: ['customer', 'worker', 'guest'],
+      default: 'guest',
+    },
+    submitterProfilePicture: {
+      type: String,
+      default: null,
+    },
+
+    // Legacy fields retained for backward compatibility with existing ads.
     workerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Worker',
@@ -14,34 +114,34 @@ const advertisementSchema = new mongoose.Schema(
     },
     title: {
       type: String,
-      required: true,
       trim: true,
-      minlength: 3,
       maxlength: 100,
+      default: '',
     },
     description: {
       type: String,
-      required: true,
       trim: true,
-      minlength: 10,
       maxlength: 1000,
+      default: '',
     },
     service: {
       type: String,
-      required: true,
       index: true,
+      default: 'advertisement',
     },
-    category: String,
+    category: {
+      type: String,
+      default: '',
+    },
     budget: {
       type: Number,
       min: 0,
+      default: 0,
     },
-    images: [
-      {
-        type: String,
-        trim: true,
-      },
-    ],
+    images: {
+      type: [String],
+      default: [],
+    },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected', 'expired'],
@@ -51,21 +151,28 @@ const advertisementSchema = new mongoose.Schema(
     adminNote: {
       type: String,
       trim: true,
+      maxlength: 500,
       default: '',
     },
     reviewedBy: {
       type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
       default: null,
     },
     reviewedAt: {
       type: Date,
       default: null,
     },
-    location: String,
+    location: {
+      type: String,
+      default: '',
+    },
     latitude: Number,
     longitude: Number,
-    phoneNumber: String,
-    email: String,
+    phoneNumber: {
+      type: String,
+      default: '',
+    },
     isGuest: {
       type: Boolean,
       default: false,
@@ -73,6 +180,7 @@ const advertisementSchema = new mongoose.Schema(
     views: {
       type: Number,
       default: 0,
+      min: 0,
     },
     interested: [
       {
@@ -90,25 +198,19 @@ const advertisementSchema = new mongoose.Schema(
     },
     expiresAt: {
       type: Date,
-      default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
+      default: null,
       index: true,
     },
-    updatedAt: {
-      type: Date,
-      default: Date.now,
-    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 advertisementSchema.index({ workerId: 1, isDeleted: 1 });
 advertisementSchema.index({ customerId: 1, isDeleted: 1 });
-advertisementSchema.index({ status: 1, isDeleted: 1 });
+advertisementSchema.index({ submitterId: 1, submitterType: 1 });
+advertisementSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
 advertisementSchema.index({ service: 1, isDeleted: 1 });
-advertisementSchema.index({ createdAt: -1 });
+advertisementSchema.index({ paymentStatus: 1, paymentSubmittedAt: -1 });
+advertisementSchema.index({ expiresAt: 1, status: 1 });
 
 export default mongoose.model('Advertisement', advertisementSchema);

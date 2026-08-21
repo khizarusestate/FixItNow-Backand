@@ -9,7 +9,7 @@ const MAGIC_BYTES = {
   "image/png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
   "image/gif": [0x47, 0x49, 0x46, 0x38],
   "image/webp": [0x52, 0x49, 0x46, 0x46],
-  "image/svg+xml": null, // SVG is text-based, handled separately
+  "image/svg+xml": null,
   "image/bmp": [0x42, 0x4d],
   "image/tiff": [0x49, 0x49, 0x2a, 0x00],
 
@@ -31,6 +31,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/bmp",
   "video/mp4",
   "video/webm",
+  "video/quicktime",
   "application/pdf",
 ]);
 
@@ -49,30 +50,17 @@ const ALLOWED_EXTENSIONS = new Set([
   ".pdf",
 ]);
 
-/**
- * Validate file extension
- */
 export const validateExtension = (filename) => {
   const ext = path.extname(filename).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(ext)) {
-    throw new Error(`File extension ${ext} is not allowed`);
-  }
+  if (!ALLOWED_EXTENSIONS.has(ext)) throw new Error(`File extension ${ext} is not allowed`);
   return ext;
 };
 
-/**
- * Validate MIME type
- */
 export const validateMimeType = (mimeType) => {
-  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-    throw new Error(`MIME type ${mimeType} is not allowed`);
-  }
+  if (!ALLOWED_MIME_TYPES.has(mimeType)) throw new Error(`MIME type ${mimeType} is not allowed`);
   return mimeType;
 };
 
-/**
- * Read magic bytes from file
- */
 const readMagicBytes = (filePath, byteCount = 12) => {
   try {
     const buffer = Buffer.alloc(byteCount);
@@ -80,53 +68,34 @@ const readMagicBytes = (filePath, byteCount = 12) => {
     fs.readSync(fd, buffer, 0, byteCount, 0);
     fs.closeSync(fd);
     return buffer;
-  } catch (error) {
+  } catch {
     throw new Error("Failed to read file for magic byte validation");
   }
 };
 
-/**
- * Validate magic bytes against expected MIME type
- */
 export const validateMagicBytes = (filePath, mimeType) => {
-  // Skip magic byte validation for SVG (text-based) and MOV/quicktime variants
-  if (mimeType === "image/svg+xml" || mimeType === "video/quicktime") {
-    return true;
-  }
+  if (mimeType === "image/svg+xml" || mimeType === "video/quicktime") return true;
 
   const expectedBytes = MAGIC_BYTES[mimeType];
-  if (!expectedBytes) {
-    return true;
-  }
+  if (!expectedBytes) return true;
 
   try {
     const buffer = readMagicBytes(filePath, expectedBytes.length);
-
     for (let i = 0; i < expectedBytes.length; i++) {
       if (expectedBytes[i] !== null && buffer[i] !== expectedBytes[i]) {
-        throw new Error(
-          `File magic bytes do not match expected ${mimeType} format`,
-        );
+        throw new Error(`File magic bytes do not match expected ${mimeType} format`);
       }
     }
-
     return true;
   } catch (error) {
     throw new Error(`Magic byte validation failed: ${error.message}`);
   }
 };
 
-/**
- * Comprehensive file validation
- */
 export const validateFile = async (filePath, filename, mimeType) => {
-  // Validate extension
   const ext = validateExtension(filename);
-
-  // Validate MIME type
   validateMimeType(mimeType);
 
-  // Validate extension matches MIME type
   const extToMime = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -142,20 +111,13 @@ export const validateFile = async (filePath, filename, mimeType) => {
   };
 
   if (extToMime[ext] !== mimeType) {
-    throw new Error(
-      `File extension ${ext} does not match MIME type ${mimeType}`,
-    );
+    throw new Error(`File extension ${ext} does not match MIME type ${mimeType}`);
   }
 
-  // Validate the file content using magic bytes
   validateMagicBytes(filePath, mimeType);
-
   return true;
 };
 
-/**
- * Generate secure filename
- */
 export const generateSecureFilename = (originalFilename, userId = null) => {
   const ext = path.extname(originalFilename).toLowerCase();
   const timestamp = Date.now();
@@ -164,9 +126,6 @@ export const generateSecureFilename = (originalFilename, userId = null) => {
   return `${prefix}${timestamp}_${random}${ext}`;
 };
 
-/**
- * Sanitize filename to prevent path traversal
- */
 export const sanitizeFilename = (filename) => {
   return filename
     .replace(/[^a-zA-Z0-9._-]/g, "_")
