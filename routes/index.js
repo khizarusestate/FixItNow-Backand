@@ -16,6 +16,7 @@ import auditLogsRoutes from './auditLogs.js';
 import pushRoutes from './push.js';
 import publicConfigRoutes from './publicConfig.js';
 import aiRoutes from "./ai.js";
+import liveTrackingRoutes from './liveTracking.js';
 const router = express.Router();
 
 router.use('/auth', authRoutes);
@@ -35,4 +36,5 @@ router.use('/geocode', geocodeRoutes);
 router.use('/push', pushRoutes);
 router.use('/public', publicConfigRoutes);
 router.use("/ai", aiRoutes);
+router.use('/live-tracking', liveTrackingRoutes);
 export default router;

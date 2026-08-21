@@ -404,6 +404,7 @@ router.get(
           status: {
             $in: [
               BOOKING_STATUS.WORKER_ASSIGNED,
+              BOOKING_STATUS.ON_THE_WAY,
               BOOKING_STATUS.IN_PROGRESS,
               BOOKING_STATUS.COMPLETED,
             ],

@@ -81,10 +81,11 @@ const bookingSchema = new mongoose.Schema(
         'pending',
         'claim-pending',
         'worker-assigned',
+        'on-the-way',
         'in-progress',
         'completed',
         'cancelled',
-        'rejected',
+        'rejected'
       ],
     },
     claimWorkerId: {
@@ -107,7 +108,6 @@ const bookingSchema = new mongoose.Schema(
       default: null,
       description: 'Admin who approved the claim'
     },
-
     // Worker started traveling toward customer
     onTheWayAt: {
       type: Date,
@@ -119,7 +119,7 @@ const bookingSchema = new mongoose.Schema(
     startedAt: {
       type: Date,
       default: null,
-      description: 'Set when worker starts the actual work'
+      description: 'Set automatically when worker reaches the customer geofence'
     },
 
     // Latest worker GPS position for live tracking
