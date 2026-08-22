@@ -23,11 +23,19 @@ export function parseCookieHeader(header = "") {
 }
 
 export function getAccessTokenFromRequest(req) {
+  // HttpOnly cookie is the authoritative session when cookie auth is enabled.
+  // This prevents a stale/invalid legacy Bearer token from overriding a valid
+  // freshly-issued cookie session. Keep Bearer as a fallback for legacy clients.
+  const cookies = parseCookieHeader(req.headers?.cookie);
+  if (USE_HTTPONLY_AUTH && cookies[ACCESS_COOKIE]) {
+    return cookies[ACCESS_COOKIE];
+  }
+
   const header = req.headers?.authorization || "";
   if (header.startsWith("Bearer ")) {
     return header.slice(7).trim();
   }
-  const cookies = parseCookieHeader(req.headers?.cookie);
+
   return cookies[ACCESS_COOKIE] || "";
 }
 
