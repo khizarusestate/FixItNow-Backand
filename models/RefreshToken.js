@@ -15,7 +15,7 @@ const refreshTokenSchema = new mongoose.Schema({
   userRole: {
     type: String,
     required: true,
-    enum: ['customer', 'worker', 'admin']
+    enum: ['customer', 'worker', 'admin', 'super_admin']
   },
   expiresAt: {
     type: Date,
