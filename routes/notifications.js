@@ -4,8 +4,15 @@ import { requireAuth } from "../middleware/auth.js";
 import Notification from "../notificationSchema.js";
 import Booking from "../bookingSchema.js";
 import mongoose from "mongoose";
+import NotificationPreference from "../models/NotificationPreference.js";
 
 const router = express.Router();
+
+// Super admin is an env-only account, but notifications are intentionally stored
+// with the admin notification role so they can be shared with the admin panel.
+// Always normalize the authenticated role for notification queries.
+const getNotificationRole = (req) =>
+  req.user?.role === "super_admin" ? "admin" : req.user?.role;
 
 // ─── GET /api/notifications/badge-summary ─────────────────────────────────────
 router.get(
@@ -20,35 +27,30 @@ router.get(
 
     const query = {
       userId: req.user.id,
-      userRole: req.user.role,
+      userRole: getNotificationRole(req),
       isRead: false,
     };
 
-    if (since) {
-      query.createdAt = { $gt: since };
-    }
+    if (since) query.createdAt = { $gt: since };
 
     const unreadCount = await Notification.countDocuments(query);
     return res.json({
       success: true,
-      data: {
-        jobs: unreadCount,
-        unread: unreadCount,
-      },
+      data: { jobs: unreadCount, unread: unreadCount },
     });
   }),
 );
 
 // ─── GET /api/notifications ────────────────────────────────────────────────────
-// Get notifications for the authenticated user
 router.get(
   "/",
   requireAuth,
   asyncHandler(async (req, res) => {
     const { page = 1, limit = 20, unreadOnly = "false" } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
+    const userRole = getNotificationRole(req);
 
-    const query = { userId: req.user.id, userRole: req.user.role };
+    const query = { userId: req.user.id, userRole };
     if (unreadOnly === "true") query.isRead = false;
 
     const [notifications, total, unreadCount] = await Promise.all([
@@ -60,7 +62,7 @@ router.get(
       Notification.countDocuments(query),
       Notification.countDocuments({
         userId: req.user.id,
-        userRole: req.user.role,
+        userRole,
         isRead: false,
       }),
     ]);
@@ -80,45 +82,36 @@ router.get(
 );
 
 // ─── PATCH /api/notifications/read-all ─────────────────────────────────────────
-// Mark all notifications as read (must be registered before /:id/read)
 router.patch(
   "/read-all",
   requireAuth,
   asyncHandler(async (req, res) => {
     await Notification.updateMany(
-      { userId: req.user.id, userRole: req.user.role, isRead: false },
+      { userId: req.user.id, userRole: getNotificationRole(req), isRead: false },
       { isRead: true },
     );
 
-    return res.json({
-      success: true,
-      message: "All notifications marked as read.",
-    });
+    return res.json({ success: true, message: "All notifications marked as read." });
   }),
 );
 
-// ─── PATCH /api/notifications/:id/read ───────────────────────────────────────────
-// Mark a notification as read
+// ─── PATCH /api/notifications/:id/read ─────────────────────────────────────────
 router.patch(
   "/:id/read",
   requireAuth,
   asyncHandler(async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid notification ID." });
+      return res.status(400).json({ success: false, message: "Invalid notification ID." });
     }
 
     const notification = await Notification.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user.id, userRole: req.user.role },
+      { _id: req.params.id, userId: req.user.id, userRole: getNotificationRole(req) },
       { isRead: true },
       { new: true },
     );
 
     if (!notification) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notification not found." });
+      return res.status(404).json({ success: false, message: "Notification not found." });
     }
 
     return res.json({
@@ -130,54 +123,42 @@ router.patch(
 );
 
 // ─── DELETE /api/notifications/:id ─────────────────────────────────────────────
-// Delete a notification
 router.delete(
   "/:id",
   requireAuth,
   asyncHandler(async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid notification ID." });
+      return res.status(400).json({ success: false, message: "Invalid notification ID." });
     }
 
     const notification = await Notification.findOneAndDelete({
       _id: req.params.id,
       userId: req.user.id,
-      userRole: req.user.role,
+      userRole: getNotificationRole(req),
     });
 
     if (!notification) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notification not found." });
+      return res.status(404).json({ success: false, message: "Notification not found." });
     }
 
     return res.json({ success: true, message: "Notification deleted." });
   }),
 );
 
-// ─── GET /api/notifications/settings ────────────────────────────────────────────
-// Get user's notification preferences
-import NotificationPreference from '../models/NotificationPreference.js';
-
+// ─── GET /api/notifications/settings ───────────────────────────────────────────
 router.get(
-  '/settings',
+  "/settings",
   requireAuth,
   asyncHandler(async (req, res) => {
     const userId = req.user?.id;
-    const userType = req.user?.role || 'customer';
+    const userType = getNotificationRole(req) || "customer";
 
     if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required',
-      });
+      return res.status(401).json({ success: false, message: "Authentication required" });
     }
 
     let prefs = await NotificationPreference.findOne({ userId });
 
-    // Create default preferences if not exists
     if (!prefs) {
       prefs = new NotificationPreference({
         userId,
@@ -216,57 +197,35 @@ router.get(
 );
 
 // ─── PUT /api/notifications/settings ───────────────────────────────────────────
-// Update user's notification preferences
 router.put(
-  '/settings',
+  "/settings",
   requireAuth,
   asyncHandler(async (req, res) => {
     const userId = req.user?.id;
-    const userType = req.user?.role || 'customer';
+    const userType = getNotificationRole(req) || "customer";
 
     if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required',
-      });
+      return res.status(401).json({ success: false, message: "Authentication required" });
     }
 
     const { pushEnabled, inAppEnabled, emailEnabled, notificationTypes } = req.body;
-
     let prefs = await NotificationPreference.findOne({ userId });
 
-    if (!prefs) {
-      prefs = new NotificationPreference({
-        userId,
-        userType,
-      });
-    }
+    if (!prefs) prefs = new NotificationPreference({ userId, userType });
 
-    // Update preferences
-    if (pushEnabled !== undefined) {
-      prefs.pushEnabled = Boolean(pushEnabled);
-    }
-    if (inAppEnabled !== undefined) {
-      prefs.inAppEnabled = Boolean(inAppEnabled);
-    }
-    if (emailEnabled !== undefined) {
-      prefs.emailEnabled = Boolean(emailEnabled);
-    }
-    if (notificationTypes && typeof notificationTypes === 'object') {
-      prefs.notificationTypes = {
-        ...prefs.notificationTypes,
-        ...notificationTypes,
-      };
+    if (pushEnabled !== undefined) prefs.pushEnabled = Boolean(pushEnabled);
+    if (inAppEnabled !== undefined) prefs.inAppEnabled = Boolean(inAppEnabled);
+    if (emailEnabled !== undefined) prefs.emailEnabled = Boolean(emailEnabled);
+    if (notificationTypes && typeof notificationTypes === "object") {
+      prefs.notificationTypes = { ...prefs.notificationTypes, ...notificationTypes };
     }
 
     prefs.updatedAt = new Date();
     await prefs.save();
 
-    console.log(`✓ Notification settings updated for user ${userId}`);
-
     return res.json({
       success: true,
-      message: 'Notification settings updated',
+      message: "Notification settings updated",
       data: {
         pushEnabled: prefs.pushEnabled,
         inAppEnabled: prefs.inAppEnabled,
