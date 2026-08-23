@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import Booking from "../bookingSchema.js";
-import { emitToUser } from "./socketManager.js";
+import { emitToUser, getSocketIO } from "./socketManager.js";
 
 const ACTIVE_STATUSES = new Set(["worker-assigned", "on-the-way", "in-progress"]);
 
@@ -69,3 +69,14 @@ export function registerVoiceCallSocketHandlers(socket) {
     }
   });
 }
+
+// index.js already imports this module before initializing Socket.IO. Register
+// the handlers once Socket.IO has been initialized so the feature cannot be
+// accidentally left disconnected from the server's existing socket instance.
+setTimeout(() => {
+  try {
+    getSocketIO().on("connection", registerVoiceCallSocketHandlers);
+  } catch {
+    // The server may be importing this module outside its Socket.IO bootstrap.
+  }
+}, 0);
