@@ -108,21 +108,16 @@ const bookingSchema = new mongoose.Schema(
       default: null,
       description: 'Admin who approved the claim'
     },
-    // Worker started traveling toward customer
     onTheWayAt: {
       type: Date,
       default: null,
       description: 'Set when worker starts traveling to the customer'
     },
-
-    // Worker started the actual job
     startedAt: {
       type: Date,
       default: null,
       description: 'Set automatically when worker reaches the customer geofence'
     },
-
-    // Latest worker GPS position for live tracking
     currentLatitude: {
       type: Number,
       default: null
@@ -135,13 +130,11 @@ const bookingSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
-
     timeline: [{
       status: String,
       timestamp: Date,
       note: String
     }],
-
     paymentDetails: {
       serviceFee: { type: Number, default: 0 },
       workerEarnings: { type: Number, default: 0 },
@@ -149,28 +142,20 @@ const bookingSchema = new mongoose.Schema(
       platformCommission: { type: Number, default: 0 },
       processedAt: { type: Date, default: null },
       paymentReceipt: { type: String, default: '' },
-
-      /** jazzcash | bank-transfer | pay-after-work */
       paymentMethod: {
         type: String,
         default: '',
         trim: true
       },
-
-      /** Customer will pay after the job is completed */
       payAfterWork: {
         type: Boolean,
         default: false
       },
-
-      /** Snapshot of pay-to instructions shown to the customer */
       payToSummary: {
         type: String,
         default: '',
         trim: true
       },
-
-      /** Admin confirmed customer paid (pay-after-work only) */
       paymentReceived: {
         type: Boolean,
         default: false
@@ -184,14 +169,10 @@ const bookingSchema = new mongoose.Schema(
         ref: 'Admin',
         default: null,
       },
-
-      /** One-shot reminder sent 24h after worker marked done without payment */
       paymentReminderSentAt: {
         type: Date,
         default: null
       },
-
-      /** Worker commission (20%) at claim */
       commissionAmount: {
         type: Number,
         default: 0
@@ -201,6 +182,11 @@ const bookingSchema = new mongoose.Schema(
         default: ''
       },
       commissionTransactionId: {
+        type: String,
+        default: '',
+        trim: true
+      },
+      commissionPaymentMethod: {
         type: String,
         default: '',
         trim: true
@@ -228,20 +214,16 @@ const bookingSchema = new mongoose.Schema(
         trim: true
       },
     },
-
     completedAt: {
       type: Date,
       default: null
     },
-
     customerRating: {
       type: Number,
       min: 1,
       max: 5,
       default: null
     },
-
-    /** Customer tapped Done + rating (orange tick in admin) */
     customerMarkedDone: {
       type: Boolean,
       default: false,
@@ -250,8 +232,6 @@ const bookingSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-
-    /** Worker tapped Done on their side (blue tick in admin) */
     workerMarkedDone: {
       type: Boolean,
       default: false,
@@ -260,7 +240,6 @@ const bookingSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-
     isDeleted: {
       type: Boolean,
       default: false
