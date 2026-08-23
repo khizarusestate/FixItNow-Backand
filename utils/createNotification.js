@@ -23,26 +23,45 @@ const NOTIFICATION_TYPE_PREFERENCE_KEYS = {
   job_completed: "jobCompleted",
 };
 
-async function getNotificationDeliveryPreferences(userId, type) {
+async function getNotificationDeliveryPreferences(userId, userRole, type) {
   try {
     const prefs = await NotificationPreference.findOne({ userId }).lean();
-    if (!prefs) {
-      return { inAppEnabled: true, pushEnabled: true, typeEnabled: true };
-    }
-
     const preferenceKey = NOTIFICATION_TYPE_PREFERENCE_KEYS[type];
     const typeEnabled = preferenceKey
-      ? prefs.notificationTypes?.[preferenceKey] !== false
+      ? prefs?.notificationTypes?.[preferenceKey] !== false
       : true;
 
+    // The profile Settings > Notifications switch is the authoritative
+    // device-level push preference. It is deliberately checked server-side so
+    // a stale browser subscription can never bypass the user's OFF setting.
+    let devicePushEnabled = true;
+    if (userRole === "customer") {
+      const Customer = (await import("../customerSchema.js")).default;
+      const user = await Customer.findById(userId).select("devicePushEnabled").lean();
+      devicePushEnabled = user?.devicePushEnabled !== false;
+    } else if (userRole === "worker") {
+      const Worker = (await import("../workerSchema.js")).default;
+      const user = await Worker.findById(userId).select("devicePushEnabled").lean();
+      devicePushEnabled = user?.devicePushEnabled !== false;
+    } else if (userRole === "admin") {
+      if (isEnvSuperAdminConfigured() && String(userId) === String(ENV_SUPER_ADMIN_ID)) {
+        devicePushEnabled = true;
+      } else {
+        const Admin = (await import("../models/Admin.js")).default;
+        const user = await Admin.findById(userId).select("devicePushEnabled").lean();
+        devicePushEnabled = user?.devicePushEnabled !== false;
+      }
+    }
+
     return {
-      inAppEnabled: prefs.inAppEnabled !== false,
-      pushEnabled: prefs.pushEnabled !== false,
+      inAppEnabled: prefs?.inAppEnabled !== false,
+      pushEnabled: (prefs?.pushEnabled !== false) && devicePushEnabled,
       typeEnabled,
     };
   } catch (err) {
     logger.warn("Notification preference lookup failed", {
       userId,
+      userRole,
       type,
       error: err?.message,
     });
@@ -52,7 +71,8 @@ async function getNotificationDeliveryPreferences(userId, type) {
 
 /**
  * Persist a notification and deliver it through the channels enabled by the user.
- * inAppEnabled controls socket/live delivery; pushEnabled controls web push.
+ * inAppEnabled controls socket/live delivery; the Profile Settings notification
+ * switch controls browser push delivery server-side as well as subscription state.
  */
 export async function createNotification({
   userId,
@@ -69,7 +89,7 @@ export async function createNotification({
   if (!userId || !userRole || !title || !message) return null;
 
   try {
-    const preferences = await getNotificationDeliveryPreferences(userId, type);
+    const preferences = await getNotificationDeliveryPreferences(userId, userRole, type);
 
     if (!preferences.typeEnabled) return null;
     if (!preferences.inAppEnabled && (!deliverPush || !preferences.pushEnabled)) {
