@@ -29,3 +29,7 @@ export function decryptMessage(payload) {
     return "[Unable to decrypt message]";
   }
 }
+
+export function decryptStoredMessage(text, encryptionVersion = 0) {
+  return Number(encryptionVersion) === 1 ? decryptMessage(text) : String(text || "");
+}
