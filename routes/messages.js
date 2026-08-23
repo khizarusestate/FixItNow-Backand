@@ -7,8 +7,9 @@ import Message from "../models/Message.js";
 import Notification from "../notificationSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
-import { emitToUser } from "../utils/socketManager.js";
+import { emitToUser, isUserConnected } from "../utils/socketManager.js";
 import { decryptStoredMessage, encryptMessage } from "../utils/messageCrypto.js";
+import { sendWebPushToUser } from "../utils/webPush.js";
 
 const router = express.Router();
 
@@ -208,8 +209,7 @@ router.post(
       type: "message",
     });
 
-    emitToUser(recipient.id, "message-new", payload);
-    emitToUser(recipient.id, "notification-new", {
+    const notificationPayload = {
       id: String(notification._id),
       title: notification.title,
       message: notification.message,
@@ -217,7 +217,25 @@ router.post(
       relatedEntityId: String(booking._id),
       bookingId: String(booking._id),
       link: notification.link,
-    });
+    };
+
+    const recipientConnected = isUserConnected(recipient.id);
+    emitToUser(recipient.id, "message-new", payload);
+    emitToUser(recipient.id, "notification-new", notificationPayload);
+
+    if (!recipientConnected) {
+      void sendWebPushToUser(
+        recipient.id,
+        recipient.role,
+        {
+          title: "New message",
+          message: `${recipient.name || "You have a new message"}: ${notification.message}`,
+          type: "message",
+          tag: `message-${booking._id}`,
+          url: "/",
+        },
+      ).catch(() => {});
+    }
 
     return res.status(201).json({ success: true, data: payload });
   }),
