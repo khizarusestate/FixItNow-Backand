@@ -14,18 +14,22 @@ function isSuperAdminLoginRequest(req) {
   const { email: envEmail } = readEnvSuperAdminConfig();
   const email = String(req.body?.email || "").toLowerCase().trim();
 
-  // ✅ CRITICAL: Super admin has unlimited login attempts
   const isSuperAdmin = Boolean(envEmail && email === envEmail);
 
   if (isSuperAdmin) {
     logger.debug("Super admin request detected", {
-      email: email,
+      email,
       loginAs: req.body?.loginAs,
       hasEnvEmail: Boolean(envEmail),
     });
   }
 
   return isSuperAdmin;
+}
+
+// Mounted at /api/auth, so req.path is /refresh for POST /api/auth/refresh.
+function isRefreshTokenRequest(req) {
+  return req.method === "POST" && req.path === "/refresh";
 }
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
@@ -35,7 +39,10 @@ export const authRateLimit = rateLimit({
   max: RATE_LIMITS.AUTH_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => isSuperAdminLoginRequest(req),
+  // Token refresh is authenticated session maintenance, not a login attempt.
+  // Counting it against the login limiter can lock a healthy worker/customer
+  // out for 15 minutes when the client refreshes after an access-token expiry.
+  skip: (req) => isSuperAdminLoginRequest(req) || isRefreshTokenRequest(req),
   message: {
     success: false,
     message:
@@ -59,8 +66,6 @@ export const apiRateLimit = rateLimit({
     success: false,
     message: "Too many requests. Please slow down.",
   },
-  // Dev: React Strict Mode + Vite HMR can legitimately double-fetch; the SPA
-  // also batches many public reads on first paint — avoid blocking local work.
   skip: () => isNonProduction,
 });
 
@@ -91,7 +96,6 @@ export const strictRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // ✅ CRITICAL: Skip rate limiting for super admin login
     const isSuperAdmin = isSuperAdminLoginRequest(req);
 
     if (isSuperAdmin) {
@@ -147,7 +151,6 @@ export const handleTimeout = (req, res, next) => {
 
 // ─── Security Headers Enhancement ─────────────────────────────────────────────
 
-// Custom security headers
 export const securityHeaders = (req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -159,7 +162,6 @@ export const securityHeaders = (req, res, next) => {
     "geolocation=(), microphone=(), camera=()",
   );
 
-  // CSP Policy - More permissive for development/production
   const cspPolicy = `
     default-src 'self';
     script-src 'self' 'unsafe-inline' 'unsafe-eval'
@@ -192,7 +194,6 @@ export const securityHeaders = (req, res, next) => {
   next();
 };
 
-// Validate content type for POST/PUT/PATCH requests
 export const validateContentType = (req, res, next) => {
   if (["POST", "PUT", "PATCH"].includes(req.method)) {
     if (
@@ -210,9 +211,7 @@ export const validateContentType = (req, res, next) => {
   next();
 };
 
-// Prevent parameter pollution
 export const preventParameterPollution = (req, res, next) => {
-  // Remove duplicate query parameters
   const cleanQuery = {};
 
   for (const key in req.query) {
