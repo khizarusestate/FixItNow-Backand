@@ -23,10 +23,12 @@ const ADMIN_TRANSITIONS = {
   cancelled: [],
 };
 
-/**
- * Resolve a state-aware error for a booking action, or null if allowed.
- * @returns {{ code, message, status, refreshRecommended, details? } | null}
- */
+const WORKER_COMPLETABLE_STATUSES = new Set([
+  "worker-assigned",
+  "on-the-way",
+  "in-progress",
+]);
+
 function blockPayload(fields) {
   return { refreshRecommended: true, ...fields };
 }
@@ -64,7 +66,6 @@ export function getBookingActionBlock(booking, action, context = {}) {
 
 function getCustomerCancelBlock(status, serviceTitle) {
   if (status === "pending") return null;
-
   const blocks = {
     rejected: blockPayload({
       code: ERROR_CODES.BOOKING_ALREADY_REJECTED,
@@ -97,15 +98,11 @@ function getCustomerCancelBlock(status, serviceTitle) {
       status: 409,
     }),
   };
-
-  return (
-    blocks[status] ||
-    blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_CANCELLABLE,
-      message: `Cannot cancel ${serviceTitle} while it is ${humanizeBookingStatus(status)}. Please refresh your bookings list.`,
-      status: 400,
-    })
-  );
+  return blocks[status] || blockPayload({
+    code: ERROR_CODES.BOOKING_NOT_CANCELLABLE,
+    message: `Cannot cancel ${serviceTitle} while it is ${humanizeBookingStatus(status)}. Please refresh your bookings list.`,
+    status: 400,
+  });
 }
 
 function getCustomerCompleteBlock(booking, serviceTitle) {
@@ -117,9 +114,7 @@ function getCustomerCompleteBlock(booking, serviceTitle) {
       status: 409,
     });
   }
-  if (status === "worker-assigned") {
-    return null;
-  }
+  if (WORKER_COMPLETABLE_STATUSES.has(status)) return null;
 
   const blocks = {
     pending: blockPayload({
@@ -143,15 +138,11 @@ function getCustomerCompleteBlock(booking, serviceTitle) {
       status: 409,
     }),
   };
-
-  return (
-    blocks[status] ||
-    blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
-      message: `Cannot mark ${serviceTitle} as done while it is ${humanizeBookingStatus(status)}. Please refresh your bookings.`,
-      status: 400,
-    })
-  );
+  return blocks[status] || blockPayload({
+    code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+    message: `Cannot mark ${serviceTitle} as done while it is ${humanizeBookingStatus(status)}. Please refresh your bookings.`,
+    status: 400,
+  });
 }
 
 function getWorkerMarkDoneBlock(booking, serviceTitle) {
@@ -170,15 +161,18 @@ function getWorkerMarkDoneBlock(booking, serviceTitle) {
       status: 409,
     });
   }
-  if (status === "worker-assigned") {
-    return null;
-  }
+  if (WORKER_COMPLETABLE_STATUSES.has(status)) return null;
 
   const blocks = {
     pending: blockPayload({
       code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
       message: `${serviceTitle} is not assigned to you yet.`,
       status: 400,
+    }),
+    "claim-pending": blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+      message: `${serviceTitle} is still awaiting admin approval.`,
+      status: 409,
     }),
     completed: blockPayload({
       code: ERROR_CODES.BOOKING_ALREADY_COMPLETED,
@@ -196,15 +190,11 @@ function getWorkerMarkDoneBlock(booking, serviceTitle) {
       status: 409,
     }),
   };
-
-  return (
-    blocks[status] ||
-    blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
-      message: `Cannot mark ${serviceTitle} as done while it is ${humanizeBookingStatus(status)}.`,
-      status: 400,
-    })
-  );
+  return blocks[status] || blockPayload({
+    code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+    message: `Cannot mark ${serviceTitle} as done while it is ${humanizeBookingStatus(status)}.`,
+    status: 400,
+  });
 }
 
 function getWorkerClaimBlock(status, serviceTitle, context) {
@@ -215,13 +205,17 @@ function getWorkerClaimBlock(status, serviceTitle, context) {
       status: 409,
     });
   }
-
   if (status === "pending") return null;
 
   const blocks = {
     "worker-assigned": blockPayload({
       code: ERROR_CODES.BOOKING_ALREADY_CLAIMED,
       message: `${serviceTitle} has already been assigned to a worker.`,
+      status: 409,
+    }),
+    "claim-pending": blockPayload({
+      code: ERROR_CODES.BOOKING_ALREADY_CLAIMED,
+      message: `${serviceTitle} already has a claim awaiting review.`,
       status: 409,
     }),
     rejected: blockPayload({
@@ -240,27 +234,21 @@ function getWorkerClaimBlock(status, serviceTitle, context) {
       status: 410,
     }),
   };
-
-  return (
-    blocks[status] ||
-    blockPayload({
-      code: ERROR_CODES.BOOKING_NOT_AVAILABLE,
-      message: `${serviceTitle} is not available to claim (status: ${humanizeBookingStatus(status)}).`,
-      status: 400,
-    })
-  );
+  return blocks[status] || blockPayload({
+    code: ERROR_CODES.BOOKING_NOT_AVAILABLE,
+    message: `${serviceTitle} is not available to claim (status: ${humanizeBookingStatus(status)}).`,
+    status: 400,
+  });
 }
 
 function getAdminStatusBlock(currentStatus, targetStatus) {
   if (!targetStatus) return null;
   const allowed = ADMIN_TRANSITIONS[currentStatus] || [];
   if (allowed.includes(targetStatus)) return null;
-
   const terminal = ["rejected", "cancelled", "completed"].includes(currentStatus);
   const message = terminal
     ? `This booking is already ${humanizeBookingStatus(currentStatus)} and cannot be changed to "${targetStatus}".`
     : `Cannot change booking from ${humanizeBookingStatus(currentStatus)} to "${targetStatus}". Allowed next steps: ${allowed.join(", ") || "none"}.`;
-
   return blockPayload({
     code: ERROR_CODES.BOOKING_INVALID_TRANSITION,
     message,
@@ -269,21 +257,14 @@ function getAdminStatusBlock(currentStatus, targetStatus) {
   });
 }
 
-/**
- * If action is blocked, sends error response and returns true.
- */
 export function rejectBookingAction(res, booking, action, context = {}) {
   const block = getBookingActionBlock(booking, action, context);
   if (!block) return false;
-
   return sendApiError(res, block.code, {
     message: block.message,
     status: block.status,
     refreshRecommended: block.refreshRecommended !== false,
-    details: {
-      currentStatus: booking?.status,
-      ...block.details,
-    },
+    details: { currentStatus: booking?.status, ...block.details },
   });
 }
 
