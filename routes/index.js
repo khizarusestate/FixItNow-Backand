@@ -17,11 +17,13 @@ import pushRoutes from './push.js';
 import publicConfigRoutes from './publicConfig.js';
 import aiRoutes from "./ai.js";
 import liveTrackingRoutes from './liveTracking.js';
+import messengerRoutes from './messenger.js';
 const router = express.Router();
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/admin/audit-logs', auditLogsRoutes);
+router.use('/admin/messenger', messengerRoutes);
 router.use('/bookings', bookingRoutes);
 router.use('/worker', workerRoutes);
 router.use('/services', servicesRoutes);
