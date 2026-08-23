@@ -17,7 +17,9 @@ export const BOOKING_ACTION = {
 const ADMIN_TRANSITIONS = {
   pending: ["worker-assigned", "claim-pending", "cancelled", "rejected"],
   "claim-pending": ["worker-assigned", "pending", "cancelled"],
-  "worker-assigned": ["completed", "cancelled"],
+  "worker-assigned": ["on-the-way", "in-progress", "completed", "cancelled"],
+  "on-the-way": ["in-progress", "completed", "cancelled"],
+  "in-progress": ["completed", "cancelled"],
   completed: [],
   rejected: [],
   cancelled: [],
@@ -92,6 +94,11 @@ function getCustomerCancelBlock(status, serviceTitle) {
       message: `A worker has already been assigned to ${serviceTitle}. You cannot cancel it from here. Contact support if you need help.`,
       status: 409,
     }),
+    "on-the-way": blockPayload({
+      code: ERROR_CODES.BOOKING_IN_PROGRESS,
+      message: `The worker is already on the way to ${serviceTitle}. Cancellation is not available.`,
+      status: 409,
+    }),
     "in-progress": blockPayload({
       code: ERROR_CODES.BOOKING_IN_PROGRESS,
       message: `Work on ${serviceTitle} is already in progress. Cancellation is not available.`,
@@ -121,6 +128,11 @@ function getCustomerCompleteBlock(booking, serviceTitle) {
       code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
       message: `${serviceTitle} is not assigned yet. You can mark it done only after a worker is assigned.`,
       status: 400,
+    }),
+    "claim-pending": blockPayload({
+      code: ERROR_CODES.BOOKING_NOT_COMPLETABLE,
+      message: `${serviceTitle} is still awaiting admin approval.`,
+      status: 409,
     }),
     rejected: blockPayload({
       code: ERROR_CODES.BOOKING_ALREADY_REJECTED,
@@ -272,6 +284,8 @@ export function customerStatusNotification(status, serviceTitle) {
   const title = serviceTitle ? `"${serviceTitle}"` : "Your booking";
   const map = {
     "worker-assigned": `A worker has been assigned to ${title}.`,
+    "on-the-way": `Your worker is on the way to ${title}.`,
+    "in-progress": `Work on ${title} is now in progress.`,
     rejected: `${title} was rejected by the admin. Please submit a new request if you still need the service.`,
     cancelled: `${title} has been cancelled.`,
     completed: `${title} has been marked as completed.`,
