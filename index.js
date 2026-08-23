@@ -75,6 +75,7 @@ import {
   setUserPresenceOffline,
 } from "./utils/userPresence.js";
 import { getAccessTokenFromRequest } from "./utils/authCookies.js";
+import { registerVoiceCallSocketHandlers } from "./utils/voiceCallSocket.js";
 
 // ❌ REMOVED: Redis import
 // import { initRedis } from "./utils/cache.js";
@@ -281,6 +282,8 @@ io.on("connection", (socket) => {
       socket.emit("error", { message: "Invalid token" });
     }
   });
+
+  registerVoiceCallSocketHandlers(socket);
 
   socket.on("disconnect", () => {
     if (socket.userId) {
