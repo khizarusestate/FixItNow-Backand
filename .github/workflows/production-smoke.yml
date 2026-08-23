@@ -1,0 +1,33 @@
+name: Production Smoke Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check customer frontend
+        run: curl --fail --silent --show-error --max-time 15 https://fixitnow.pk/ > /dev/null
+
+      - name: Check backend health
+        run: curl --fail --silent --show-error --max-time 15 https://fixitnow.pk/health > /dev/null
+
+      - name: Check push configuration
+        run: |
+          response="$(curl --fail --silent --show-error --max-time 15 https://fixitnow.pk/api/push/vapid-public-key)"
+          echo "$response" | grep -q '"success":true'
+
+      - name: Check Socket.IO handshake
+        run: |
+          response="$(curl --fail --silent --show-error --max-time 15 'https://fixitnow.pk/socket.io/?EIO=4&transport=polling')"
+          echo "$response" | grep -q 'sid'
+
+      - name: Check admin frontend
+        run: curl --fail --silent --show-error --max-time 15 https://admin.fixitnow.pk/ > /dev/null
