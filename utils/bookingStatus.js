@@ -14,16 +14,15 @@ export function canonicalBookingStatus(status) {
 }
 
 export function isOpenForWorkers(status) {
-  const s = canonicalBookingStatus(status);
-  return s === BOOKING_STATUS.PENDING;
+  return canonicalBookingStatus(status) === BOOKING_STATUS.PENDING;
 }
 
 export function workerCanSeeFullCustomerDetails(status) {
   const s = canonicalBookingStatus(status);
   return [
     BOOKING_STATUS.WORKER_ASSIGNED,
+    BOOKING_STATUS.ON_THE_WAY,
     BOOKING_STATUS.IN_PROGRESS,
     BOOKING_STATUS.COMPLETED,
-    "assigned",
   ].includes(s);
 }
