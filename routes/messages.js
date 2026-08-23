@@ -5,18 +5,44 @@ import { requireAuth } from "../middleware/auth.js";
 import Booking from "../bookingSchema.js";
 import Message from "../models/Message.js";
 import Notification from "../notificationSchema.js";
+import Customer from "../customerSchema.js";
+import Worker from "../workerSchema.js";
 import { emitToUser } from "../utils/socketManager.js";
+import { decryptStoredMessage, encryptMessage } from "../utils/messageCrypto.js";
 
 const router = express.Router();
 
 const CHAT_STATUSES = ["worker-assigned", "on-the-way", "in-progress", "completed"];
 const SEND_STATUSES = ["worker-assigned", "on-the-way", "in-progress"];
+const MAX_PAGE_SIZE = 50;
+
+async function activeUser(req) {
+  if (req.user?.role === "customer") {
+    return Customer.findOne({ _id: req.user.id, isDeleted: { $ne: true } })
+      .select("_id isActive status")
+      .lean();
+  }
+  if (req.user?.role === "worker") {
+    return Worker.findOne({ _id: req.user.id, isDeleted: { $ne: true } })
+      .select("_id isDisabled status approvalStatus")
+      .lean();
+  }
+  return null;
+}
+
+function accountIsUsable(role, account) {
+  if (!account) return false;
+  if (role === "customer") return account.isActive !== false && account.status !== "rejected";
+  return !account.isDisabled && account.status !== "rejected" && account.approvalStatus !== "rejected";
+}
 
 async function getAuthorizedBooking(req, bookingId) {
   if (!mongoose.Types.ObjectId.isValid(bookingId)) return null;
 
   const role = req.user?.role;
   if (role !== "customer" && role !== "worker") return null;
+  const account = await activeUser(req);
+  if (!accountIsUsable(role, account)) return null;
 
   const query = {
     _id: bookingId,
@@ -38,10 +64,14 @@ async function getAuthorizedBooking(req, bookingId) {
 }
 
 function otherParticipant(booking, role) {
-  if (role === "customer") {
-    return { id: booking.workerId, role: "worker", name: "Worker" };
-  }
+  if (role === "customer") return { id: booking.workerId, role: "worker", name: "Worker" };
   return { id: booking.customerId, role: "customer", name: booking.customerName || "Customer" };
+}
+
+function publicMessage(message) {
+  const item = typeof message.toObject === "function" ? message.toObject() : { ...message };
+  item.text = decryptStoredMessage(item.text, item.encryptionVersion);
+  return item;
 }
 
 router.get(
@@ -49,9 +79,9 @@ router.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const role = req.user?.role;
-    if (role !== "customer" && role !== "worker") {
-      return res.status(403).json({ success: false, message: "User access required." });
-    }
+    if (role !== "customer" && role !== "worker") return res.status(403).json({ success: false, message: "User access required." });
+    const account = await activeUser(req);
+    if (!accountIsUsable(role, account)) return res.status(403).json({ success: false, message: "Your account is not permitted to use messaging." });
 
     const bookingQuery = {
       isDeleted: false,
@@ -78,7 +108,7 @@ router.get(
     const latest = await Message.aggregate([
       { $match: { bookingId: { $in: bookingIds } } },
       { $sort: { createdAt: -1 } },
-      { $group: { _id: "$bookingId", text: { $first: "$text" }, createdAt: { $first: "$createdAt" }, senderId: { $first: "$senderId" } } },
+      { $group: { _id: "$bookingId", text: { $first: "$text" }, encryptionVersion: { $first: "$encryptionVersion" }, createdAt: { $first: "$createdAt" }, senderId: { $first: "$senderId" } } },
     ]);
     const latestMap = new Map(latest.map((item) => [String(item._id), item]));
 
@@ -86,12 +116,13 @@ router.get(
       success: true,
       data: bookings.map((booking) => {
         const last = latestMap.get(String(booking._id));
+        const lastText = last ? decryptStoredMessage(last.text, last.encryptionVersion) : "";
         return {
           bookingId: String(booking._id),
           serviceTitle: booking.serviceTitle,
           status: booking.status,
           participant: otherParticipant(booking, role),
-          lastMessage: last ? { text: last.text, createdAt: last.createdAt, senderId: String(last.senderId) } : null,
+          lastMessage: last ? { text: lastText, createdAt: last.createdAt, senderId: String(last.senderId) } : null,
           unreadCount: unreadMap.get(String(booking._id)) || 0,
         };
       }),
@@ -104,11 +135,18 @@ router.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const booking = await getAuthorizedBooking(req, req.params.bookingId);
-    if (!booking) {
-      return res.status(404).json({ success: false, message: "Messaging is unavailable for this booking." });
-    }
+    if (!booking) return res.status(404).json({ success: false, message: "Messaging is unavailable for this booking." });
 
-    const messages = await Message.find({ bookingId: booking._id }).sort({ createdAt: 1 }).lean();
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || MAX_PAGE_SIZE, 1), MAX_PAGE_SIZE);
+    const before = req.query.before;
+    const messageQuery = { bookingId: booking._id };
+    if (before && mongoose.Types.ObjectId.isValid(before)) messageQuery._id = { $lt: before };
+
+    const rows = await Message.find(messageQuery)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit)
+      .lean();
+    rows.reverse();
 
     return res.json({
       success: true,
@@ -119,7 +157,9 @@ router.get(
           status: booking.status,
           participant: otherParticipant(booking, req.user.role),
         },
-        messages,
+        messages: rows.map(publicMessage),
+        hasMore: rows.length === limit,
+        nextBefore: rows.length ? String(rows[0]._id) : null,
       },
     });
   }),
@@ -139,24 +179,24 @@ router.post(
     }
 
     const recipient = otherParticipant(booking, req.user.role);
+    const encryptedText = encryptMessage(text);
     const message = await Message.create({
       bookingId: booking._id,
       senderId: req.user.id,
       senderRole: req.user.role,
       recipientId: recipient.id,
       recipientRole: recipient.role,
-      text,
+      text: encryptedText,
+      encryptionVersion: 1,
     });
 
     const payload = {
-      ...message.toObject(),
+      ...publicMessage(message),
       bookingId: String(booking._id),
       senderId: String(message.senderId),
       recipientId: String(message.recipientId),
     };
 
-    // Reuse the existing notification channel so the frontend's single Socket.IO
-    // connection can wake the messenger without opening a second socket.
     const notification = await Notification.create({
       userId: recipient.id,
       userRole: recipient.role,
