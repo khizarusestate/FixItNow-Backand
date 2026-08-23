@@ -807,48 +807,58 @@ router.post(
         user = await Customer.findById(record.userId);
       } else if (record.userRole === "worker") {
         user = await Worker.findById(record.userId);
-      } else if (record.userRole === "admin") {
+      } else if (record.userRole === "super_admin") {
         const {
           ENV_SUPER_ADMIN_ID,
           isEnvSuperAdminConfigured,
           getEnvSuperAdminProfile,
         } = await import("../services/envSuperAdmin.js");
-        const { ADMIN_PANEL_ROLES } = await import("../middleware/adminRoles.js");
 
-        if (String(record.userId) === ENV_SUPER_ADMIN_ID) {
-          if (!isEnvSuperAdminConfigured()) {
-            await revokeRefreshToken(refreshToken);
-            return res.status(503).json({
-              success: false,
-              message: "Super admin is not configured on the server.",
-            });
-          }
-          const profile = getEnvSuperAdminProfile();
-          const payload = {
-            id: ENV_SUPER_ADMIN_ID,
-            role: "super_admin",
-            email: profile.email,
-          };
-          const newAccessToken = createAccessToken(payload);
-          const newRefreshToken = await createRefreshToken(
-            ENV_SUPER_ADMIN_ID,
-            record.userRole,
-            req,
-            refreshTokenDaysFromRecord(record),
-          );
+        // Super Admin exists only in server environment configuration.
+        // Never resolve a super_admin refresh token through MongoDB.
+        if (String(record.userId) !== ENV_SUPER_ADMIN_ID) {
           await revokeRefreshToken(refreshToken);
-          return res.json(
-            attachAuthToResponse(res, {
-              accessToken: newAccessToken,
-              refreshToken: newRefreshToken,
-              body: {
-                success: true,
-                message: "Token refreshed successfully.",
-              },
-            }),
-          );
+          return res.status(401).json({
+            success: false,
+            message: "Invalid super admin refresh token.",
+          });
         }
 
+        if (!isEnvSuperAdminConfigured()) {
+          await revokeRefreshToken(refreshToken);
+          return res.status(503).json({
+            success: false,
+            message: "Super admin is not configured on the server.",
+          });
+        }
+
+        const profile = getEnvSuperAdminProfile();
+        const payload = {
+          id: ENV_SUPER_ADMIN_ID,
+          role: "super_admin",
+          email: profile.email,
+        };
+        const newAccessToken = createAccessToken(payload);
+        const newRefreshToken = await createRefreshToken(
+          ENV_SUPER_ADMIN_ID,
+          "super_admin",
+          req,
+          refreshTokenDaysFromRecord(record),
+        );
+
+        await revokeRefreshToken(refreshToken);
+
+        return res.json(
+          attachAuthToResponse(res, {
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            body: {
+              success: true,
+              message: "Token refreshed successfully.",
+            },
+          }),
+        );
+      } else if (record.userRole === "admin") {
         const Admin = (await import("../models/Admin.js")).default;
         user = await Admin.findById(record.userId);
         if (!user) {

@@ -259,7 +259,7 @@ router.post('/login', validateAdminLogin, asyncHandler(async (req, res) => {
 
     let refreshToken;
     if (env.USE_REFRESH_TOKENS) {
-      refreshToken = await createRefreshToken(ENV_SUPER_ADMIN_ID, 'admin', req);
+      refreshToken = await createRefreshToken(ENV_SUPER_ADMIN_ID, 'super_admin', req);
     }
 
     logger.info('Super admin login successful (env)', { email: profile.email, ip: req.ip });
