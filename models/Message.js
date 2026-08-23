@@ -26,11 +26,15 @@ const messageSchema = new mongoose.Schema(
       enum: ["customer", "worker"],
       required: true,
     },
+    // AES-256-GCM ciphertext. Plaintext is never persisted.
     text: {
       type: String,
       required: true,
-      trim: true,
-      maxlength: 2000,
+      maxlength: 5000,
+    },
+    encryptionVersion: {
+      type: Number,
+      default: 1,
     },
     readAt: {
       type: Date,
