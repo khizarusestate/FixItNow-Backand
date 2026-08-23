@@ -196,6 +196,17 @@ export const securityHeaders = (req, res, next) => {
 
 export const validateContentType = (req, res, next) => {
   if (["POST", "PUT", "PATCH"].includes(req.method)) {
+    // Empty-body requests do not have a media type to validate. This is valid
+    // for endpoints such as PATCH /messages/:bookingId/read that only use the
+    // authenticated path parameters and intentionally send no request body.
+    const contentLength = req.headers["content-length"];
+    const transferEncoding = req.headers["transfer-encoding"];
+    const hasBody =
+      (contentLength !== undefined && Number(contentLength) > 0) ||
+      Boolean(transferEncoding);
+
+    if (!hasBody) return next();
+
     if (
       !req.is("json") &&
       !req.is("multipart/form-data") &&
