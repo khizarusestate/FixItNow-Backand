@@ -1,16 +1,17 @@
-import { setAuthCookies, USE_HTTPONLY_AUTH } from "./authCookies.js";
+import { setAuthCookies } from "./authCookies.js";
 
 /**
  * Attach auth credentials to the response.
- * In HttpOnly-cookie mode, tokens are delivered only through cookies and are
- * never exposed in the JSON response body.
+ *
+ * The API sets HttpOnly cookies as an additional browser-session mechanism,
+ * but it MUST also return the access/refresh token pair. The deployed
+ * customer/worker/admin SPAs can be cross-origin from the API and therefore
+ * use Authorization: Bearer tokens. Keeping both mechanisms here makes the
+ * server contract deterministic instead of silently changing the response
+ * shape based on an environment flag.
  */
 export function attachAuthToResponse(res, { accessToken, refreshToken, body }) {
   setAuthCookies(res, { accessToken, refreshToken });
-
-  if (USE_HTTPONLY_AUTH) {
-    return { ...body };
-  }
 
   return {
     ...body,
