@@ -1,13 +1,33 @@
 import mongoose from "mongoose";
 import Booking from "../bookingSchema.js";
+import Conversation from "../models/Conversation.js";
 import { emitToUser, isUserConnected } from "./socketManager.js";
 import { sendWebPushToUser } from "./webPush.js";
 
 const ACTIVE_STATUSES = new Set(["worker-assigned", "on-the-way", "in-progress"]);
+const USER_ROLES = new Set(["customer", "worker"]);
+
+async function authorizeSupportCall(socket, conversationId, targetUserId) {
+  if (!socket.isAdmin || !mongoose.Types.ObjectId.isValid(conversationId) || !mongoose.Types.ObjectId.isValid(targetUserId)) return null;
+  return Conversation.findOne({
+    _id: conversationId,
+    type: "support",
+    participants: {
+      $elemMatch: {
+        userId: new mongoose.Types.ObjectId(targetUserId),
+        role: { $in: [...USER_ROLES] },
+      },
+    },
+  }).select("_id").lean();
+}
 
 async function authorizeCall(socket, bookingId, targetUserId) {
   if (!socket.userId || !socket.userRole || !mongoose.Types.ObjectId.isValid(bookingId)) return null;
   if (!mongoose.Types.ObjectId.isValid(targetUserId)) return null;
+
+  if (socket.isAdmin) {
+    return authorizeSupportCall(socket, bookingId, targetUserId);
+  }
 
   const booking = await Booking.findOne({
     _id: bookingId,
@@ -28,7 +48,7 @@ export function registerVoiceCallSocketHandlers(socket) {
     try {
       const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
       if (!booking) {
-        return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this booking." });
+        return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this conversation or booking." });
       }
 
       const targetUserId = String(data.targetUserId);
@@ -36,19 +56,19 @@ export function registerVoiceCallSocketHandlers(socket) {
       if (!callId) return socket.emit("voice-call-error", { message: "Invalid voice call." });
 
       const callerName = String(
-        data.participantName || (socket.userRole === "worker" ? "Worker" : "Customer"),
+        data.participantName || (socket.isAdmin ? "Admin" : socket.userRole === "worker" ? "Worker" : "Customer"),
       );
 
       emitToUser(targetUserId, "voice-call-incoming", {
         bookingId: String(booking._id),
         callId,
-        callerId: String(socket.userId),
-        callerRole: socket.userRole,
+        callerId: String(socket.userId || socket.adminId || "admin"),
+        callerRole: socket.isAdmin ? "admin" : socket.userRole,
         callerName,
         targetUserId,
       });
 
-      if (!isUserConnected(targetUserId)) {
+      if (!socket.isAdmin && !isUserConnected(targetUserId)) {
         void sendWebPushToUser(
           targetUserId,
           socket.userRole === "worker" ? "customer" : "worker",
@@ -74,7 +94,7 @@ export function registerVoiceCallSocketHandlers(socket) {
       emitToUser(String(data.targetUserId), "voice-call-signal", {
         bookingId: String(booking._id),
         callId: String(data.callId),
-        callerId: String(socket.userId),
+        callerId: String(socket.userId || socket.adminId || "admin"),
         targetUserId: String(data.targetUserId),
         signal: data.signal,
       });
