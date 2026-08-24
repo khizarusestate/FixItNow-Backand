@@ -2766,40 +2766,9 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
   }
 
   // Update basic profile info
-  if (name) {
-    admin.name = String(name).trim();
-  }
-
-  if (email) {
-    const normalizedEmail = String(email).trim().toLowerCase();
-
-    if (!isValidEmail(normalizedEmail)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please enter a valid email address.',
-        code: 'INVALID_EMAIL',
-      });
-    }
-
-    const existingAdmin = await Admin.findOne({
-      email: normalizedEmail,
-      _id: { $ne: admin._id },
-    }).select('_id');
-
-    if (existingAdmin) {
-      return res.status(409).json({
-        success: false,
-        message: 'This email is already used by another admin account.',
-        code: 'ADMIN_EMAIL_EXISTS',
-      });
-    }
-
-    admin.email = normalizedEmail;
-  }
-
-  if (phone !== undefined) {
-    admin.phone = String(phone).trim();
-  }
+  if (name) admin.name = name;
+  if (email) admin.email = email;
+  if (phone) admin.phone = phone;
 
   if (admin.role !== 'super_admin') {
     const normalizedLocation = String(location || admin.location || '').trim();
@@ -2827,15 +2796,11 @@ router.put('/profile', requireAdmin, asyncHandler(async (req, res) => {
       return res.status(400).json({ success: false, message: 'Current PIN is incorrect.' });
     }
 
-    if (!/^\d{8}$/.test(String(newPassword))) {
-      return res.status(400).json({
-        success: false,
-        message: 'New PIN must be exactly 8 digits.',
-        code: 'INVALID_PIN_FORMAT',
-      });
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'New PIN must be at least 6 characters long.' });
     }
 
-    admin.pin = String(newPassword);
+    admin.pin = newPassword;
   }
 
   await admin.save();
@@ -2922,117 +2887,6 @@ router.post(
     });
   }),
 );
-
-
-// ─── DELETE /api/admin/profile/delete-account ─────────────────────────────────
-router.delete('/profile/delete-account', requireAdmin, asyncHandler(async (req, res) => {
-  if (isEnvSuperAdminToken(req.admin)) {
-    return res.status(403).json({
-      success: false,
-      message: 'The Super Admin account is managed by server environment variables and cannot be deleted from the panel.',
-      code: 'ENV_SUPER_ADMIN_READONLY',
-    });
-  }
-
-  const { currentPassword } = req.body;
-
-  if (!currentPassword) {
-    return res.status(400).json({
-      success: false,
-      message: 'Current PIN is required to delete the admin account.',
-      code: 'CURRENT_PIN_REQUIRED',
-    });
-  }
-
-  const admin = await Admin.findById(req.admin.id).select('+pin role name email');
-
-  if (!admin) {
-    return res.status(404).json({
-      success: false,
-      message: 'Admin account not found.',
-    });
-  }
-
-  if (admin.role === ADMIN_PANEL_ROLES.SUPER_ADMIN) {
-    return res.status(403).json({
-      success: false,
-      message: 'Super Admin account cannot be deleted from the panel.',
-      code: 'SUPER_ADMIN_PROTECTED',
-    });
-  }
-
-  if (!(await admin.comparePin(String(currentPassword)))) {
-    return res.status(401).json({
-      success: false,
-      message: 'Current PIN is incorrect.',
-      code: 'INVALID_CURRENT_PIN',
-    });
-  }
-
-  const activeAdminCount = await Admin.countDocuments({
-    role: ADMIN_PANEL_ROLES.ADMIN,
-    isActive: true,
-  });
-
-  if (activeAdminCount <= 1) {
-    return res.status(409).json({
-      success: false,
-      message: 'This is the last active admin account. Create another admin before deleting this account.',
-      code: 'LAST_ADMIN_PROTECTED',
-    });
-  }
-
-  const adminId = admin._id;
-  const adminName = admin.name;
-  const adminEmail = admin.email;
-
-  try {
-    const { revokeAllUserRefreshTokens } = await import('../utils/jwt.js');
-    await revokeAllUserRefreshTokens(adminId, 'admin');
-  } catch (err) {
-    logger.warn('Failed to revoke admin refresh tokens on self deletion', {
-      error: err.message,
-      adminId,
-    });
-  }
-
-  if (admin.profilePicture) {
-    const oldPath = path.join(__dirname, '..', admin.profilePicture);
-
-    if (fs.existsSync(oldPath)) {
-      try {
-        fs.unlinkSync(oldPath);
-      } catch (err) {
-        logger.warn('Failed to remove admin profile picture', {
-          error: err.message,
-          adminId,
-        });
-      }
-    }
-  }
-
-  await Admin.findByIdAndDelete(adminId);
-
-  emitRefresh('admins');
-  emitNotification(
-    'admins',
-    'deleted',
-    `Admin account deleted: ${adminName}`,
-  );
-
-  await logAudit(req, 'admin_self_delete', 'admin', adminId, {
-    name: adminName,
-    email: adminEmail,
-    permanentDelete: true,
-  });
-
-  clearAuthCookies(res);
-
-  return res.json({
-    success: true,
-    message: 'Admin account deleted successfully.',
-  });
-}));
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DEPRECATED — use PATCH /api/admin/bookings/:id/claim-review instead

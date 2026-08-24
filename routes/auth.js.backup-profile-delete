@@ -1504,7 +1504,7 @@ router.put(
           message: "This email is already registered as a customer.",
         });
       }
-      updateFields.email = email;
+      updateFields.emailAddress = email;
     }
     if (phoneNumber !== undefined) updateFields.phoneNumber = phoneNumber;
     if (
@@ -1560,125 +1560,57 @@ router.delete(
   asyncHandler(async (req, res) => {
     const customerId = req.customer.id;
 
-    const customer = await Customer.findOne({
-      _id: customerId,
-      isDeleted: { $ne: true },
-    });
-
+    // Get customer details for notification
+    const customer = await Customer.findById(customerId);
     if (!customer) {
-      return res.status(404).json({
-        success: false,
-        message: "Customer account not found.",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Customer not found." });
     }
 
-    // Do not allow deletion while there are active bookings.
-    const activeBookingCount = await Booking.countDocuments({
-      customerId,
-      isDeleted: false,
-      status: { $nin: ["completed", "cancelled", "rejected"] },
-    });
-
-    if (activeBookingCount > 0) {
-      return res.status(409).json({
-        success: false,
-        code: "ACTIVE_BOOKINGS_EXIST",
-        message:
-          "You cannot delete your account while you have active bookings. Complete or cancel them first.",
-        activeBookings: activeBookingCount,
-      });
-    }
-
+    // Revoke all refresh tokens for this customer
     try {
+      const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
       await revokeAllUserRefreshTokens(customerId, "customer");
     } catch (err) {
-      logger.warn("Failed to revoke customer refresh tokens on deletion", {
+      logger.warn("Failed to revoke refresh tokens on account deletion", {
         error: err.message,
-        customerId,
       });
     }
 
-    // Remove device-specific/private data.
+    // Delete all related data
     await Promise.all([
+      Booking.deleteMany({ customerId }),           // Hard delete bookings
+      Review.deleteMany({ customerId }),            // Hard delete reviews
       Notification.deleteMany({ userId: customerId }),
-      PushSubscription.deleteMany({
-        userId: customerId,
-        userRole: "customer",
-      }),
-      Advertisement.deleteMany({ customerId }),
+      Advertisement.deleteMany({ customerId }),    // Hard delete ads
+      PushSubscription.deleteMany({ userId: customerId, userRole: "customer" }),
     ]);
+    
+    // HARD DELETE - Remove customer account completely from database
+    await Customer.findByIdAndDelete(customerId);
 
-    // Remove profile picture from disk.
-    if (customer.profilePicture) {
-      const oldPath = path.join(__dirname, "..", customer.profilePicture);
-      if (fs.existsSync(oldPath)) {
-        try {
-          fs.unlinkSync(oldPath);
-        } catch (err) {
-          logger.warn("Failed to remove customer profile picture", {
-            error: err.message,
-            customerId,
-          });
-        }
-      }
-    }
-
-    const originalName = customer.fullName;
-    const originalEmail = customer.email;
-
-    // Preserve transactional history but remove personal identity.
-    customer.fullName = "Deleted Customer";
-    customer.email = `deleted-customer-${customerId}@deleted.fixitnow.invalid`;
-    customer.phone = "";
-    customer.location = "";
-    customer.latitude = null;
-    customer.longitude = null;
-    customer.placeId = "";
-    customer.profilePicture = null;
-    customer.password =
-      `deleted-${customerId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    customer.isVerified = false;
-    customer.isActive = false;
-    customer.devicePushEnabled = false;
-    customer.status = "inactive";
-    customer.isDeleted = true;
-    customer.deletedAt = new Date();
-    customer.emailVerificationCode = null;
-    customer.emailVerificationExpiresAt = null;
-    customer.passwordResetCode = null;
-    customer.passwordResetExpiresAt = null;
-
-    await customer.save();
-
+    // Notify admin
     emitNotification(
       "customers",
       "deleted",
-      `Customer account deleted: ${originalName}`,
+      `Customer account permanently deleted: ${customer.fullName}`,
     );
     emitRefresh("customers");
 
-    await logAudit(
-      {
-        admin: { id: customerId, email: originalEmail },
-        user: { id: customerId },
-      },
-      "customer_self_delete",
-      "customer",
-      customerId,
-      {
-        fullName: originalName,
-        email: originalEmail,
-        permanentIdentityRemoval: true,
-        transactionalHistoryPreserved: true,
-      },
-    );
-
-    clearAuthCookies(res);
+    // Audit log
+    await logAudit({ 
+      admin: { id: customerId },
+      user: { id: customerId }
+    }, 'customer_self_delete', 'customer', customerId, {
+      fullName: customer.fullName,
+      email: customer.email,
+      permanentDelete: true
+    });
 
     return res.json({
       success: true,
-      message:
-        "Your account has been deleted and personal information removed. Booking history was preserved for platform records.",
+      message: "Account and all related data permanently deleted from database.",
     });
   }),
 );
@@ -1690,145 +1622,57 @@ router.delete(
   asyncHandler(async (req, res) => {
     const workerId = req.worker.id;
 
-    const worker = await Worker.findOne({
-      _id: workerId,
-      isDeleted: { $ne: true },
-    });
-
+    // Get worker details for notification
+    const worker = await Worker.findById(workerId);
     if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Worker account not found.",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Worker not found." });
     }
 
-    // Worker cannot disappear while holding/claiming active jobs.
-    const activeBookingCount = await Booking.countDocuments({
-      isDeleted: false,
-      status: { $nin: ["completed", "cancelled", "rejected"] },
-      $or: [
-        { workerId },
-        { claimWorkerId: workerId },
-      ],
-    });
-
-    if (activeBookingCount > 0) {
-      return res.status(409).json({
-        success: false,
-        code: "ACTIVE_JOBS_EXIST",
-        message:
-          "You cannot delete your account while you have active or claimed jobs. Complete or release them first.",
-        activeJobs: activeBookingCount,
-      });
-    }
-
+    // Revoke all refresh tokens for this worker
     try {
+      const { revokeAllUserRefreshTokens } = await import("../utils/jwt.js");
       await revokeAllUserRefreshTokens(workerId, "worker");
     } catch (err) {
-      logger.warn("Failed to revoke worker refresh tokens on deletion", {
+      logger.warn("Failed to revoke refresh tokens on account deletion", {
         error: err.message,
-        workerId,
       });
     }
 
+    // Delete all related data
     await Promise.all([
+      Booking.deleteMany({ workerId }),            // Hard delete bookings
+      Review.deleteMany({ workerId }),             // Hard delete reviews
       Notification.deleteMany({ userId: workerId }),
-      PushSubscription.deleteMany({
-        userId: workerId,
-        userRole: "worker",
-      }),
-      Advertisement.deleteMany({ workerId }),
+      Advertisement.deleteMany({ workerId }),      // Hard delete ads
+      PushSubscription.deleteMany({ userId: workerId, userRole: "worker" }),
     ]);
+    
+    // HARD DELETE - Remove worker account completely from database
+    await Worker.findByIdAndDelete(workerId);
 
-    // Remove all private worker verification/profile images.
-    for (const imageField of [
-      "profilePicture",
-      "verificationPhoto",
-      "cnicFrontPhoto",
-      "cnicBackPhoto",
-    ]) {
-      const imagePath = worker[imageField];
-
-      if (!imagePath) continue;
-
-      const absolutePath = path.join(__dirname, "..", imagePath);
-
-      if (fs.existsSync(absolutePath)) {
-        try {
-          fs.unlinkSync(absolutePath);
-        } catch (err) {
-          logger.warn("Failed to remove worker image", {
-            error: err.message,
-            workerId,
-            imageField,
-          });
-        }
-      }
-    }
-
-    const originalName = worker.fullName;
-    const originalEmail = worker.email;
-
-    // Preserve historical bookings/reviews while removing personal identity.
-    worker.fullName = "Deleted Worker";
-    worker.firstName = "";
-    worker.lastName = "";
-    worker.email = `deleted-worker-${workerId}@deleted.fixitnow.invalid`;
-    worker.phoneNumber = "";
-    worker.location = "";
-    worker.serviceArea = "";
-    worker.latitude = null;
-    worker.longitude = null;
-    worker.placeId = "";
-    worker.profilePicture = null;
-    worker.verificationPhoto = null;
-    worker.cnicFrontPhoto = null;
-    worker.cnicBackPhoto = null;
-    worker.password =
-      `deleted-${workerId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    worker.emailVerified = false;
-    worker.devicePushEnabled = false;
-    worker.availability = false;
-    worker.status = "inactive";
-    worker.isDisabled = true;
-    worker.isDeleted = true;
-    worker.deletedAt = new Date();
-    worker.emailVerificationCode = null;
-    worker.emailVerificationExpiresAt = null;
-    worker.passwordResetCode = null;
-    worker.passwordResetExpiresAt = null;
-
-    await worker.save();
-
+    // Notify admin
     emitNotification(
       "workers",
       "deleted",
-      `Worker account deleted: ${originalName}`,
+      `Worker account permanently deleted: ${worker.fullName}`,
     );
     emitRefresh("workers");
 
-    await logAudit(
-      {
-        admin: { id: workerId, email: originalEmail },
-        user: { id: workerId },
-      },
-      "worker_self_delete",
-      "worker",
-      workerId,
-      {
-        fullName: originalName,
-        email: originalEmail,
-        permanentIdentityRemoval: true,
-        transactionalHistoryPreserved: true,
-      },
-    );
-
-    clearAuthCookies(res);
+    // Audit log
+    await logAudit({ 
+      admin: { id: workerId },
+      user: { id: workerId }
+    }, 'worker_self_delete', 'worker', workerId, {
+      fullName: worker.fullName,
+      email: worker.email,
+      permanentDelete: true
+    });
 
     return res.json({
       success: true,
-      message:
-        "Your account has been deleted and personal information removed. Job history was preserved for platform records.",
+      message: "Account and all related data permanently deleted from database.",
     });
   }),
 );
