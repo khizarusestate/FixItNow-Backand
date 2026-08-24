@@ -13,7 +13,8 @@ import Notification from "../notificationSchema.js";
 import { sendWebPushToUser } from "../utils/webPush.js";
 
 const router = express.Router();
-const USER_ROLES = ["customer", "worker", "admin"];
+const USER_ROLES = ["customer", "worker", "admin", "super_admin"];
+const conversationRole = (role) => (role === "super_admin" ? "admin" : role);
 
 function publicMessage(message) {
   const item = typeof message.toObject === "function" ? message.toObject() : { ...message };
@@ -22,7 +23,7 @@ function publicMessage(message) {
 }
 
 async function usableUser(userId, role) {
-  if (role === "admin") {
+  if (role === "admin" || role === "super_admin") {
     const u = await Admin.findOne({ _id: userId, isActive: { $ne: false } }).select("_id").lean();
     return Boolean(u);
   }
@@ -73,7 +74,8 @@ router.post("/open", requireAuth, asyncHandler(async (req, res) => {
 router.get("/mine", requireAuth, asyncHandler(async (req, res) => {
   const role = req.user?.role;
   if (!USER_ROLES.includes(role)) return res.status(403).json({ success: false, message: "User access required." });
-  const conversations = await Conversation.find({ type: "support", participants: { $elemMatch: { userId: req.user.id, role } } }).sort({ updatedAt: -1 }).lean();
+  const normalizedRole = conversationRole(role);
+  const conversations = await Conversation.find({ type: "support", participants: { $elemMatch: { userId: req.user.id, role: normalizedRole } } }).sort({ updatedAt: -1 }).lean();
   const rows = await Promise.all(conversations.map(async (c) => {
     const other = c.participants.find((p) => String(p.userId) !== String(req.user.id));
     const unreadCount = await Message.countDocuments({ conversationId: c._id, recipientId: req.user.id, readAt: null });
@@ -85,8 +87,9 @@ router.get("/mine", requireAuth, asyncHandler(async (req, res) => {
 router.get("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
   const role = req.user?.role;
   if (!USER_ROLES.includes(role)) return res.status(403).json({ success: false, message: "User access required." });
+  const normalizedRole = conversationRole(role);
   if (!mongoose.Types.ObjectId.isValid(req.params.conversationId)) return res.status(404).json({ success: false, message: "Conversation not found." });
-  const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: req.user.id, role } } }).lean();
+  const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: req.user.id, role: normalizedRole } } }).lean();
   if (!conversation) return res.status(404).json({ success: false, message: "Conversation not found." });
   const rows = await Message.find({ conversationId: conversation._id }).sort({ createdAt: 1, _id: 1 }).limit(100).lean();
   const other = conversation.participants.find((p) => String(p.userId) !== String(req.user.id));
@@ -96,18 +99,19 @@ router.get("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
 router.post("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
   const role = req.user?.role;
   if (!USER_ROLES.includes(role)) return res.status(403).json({ success: false, message: "User access required." });
+  const normalizedRole = conversationRole(role);
   if (!mongoose.Types.ObjectId.isValid(req.params.conversationId)) return res.status(404).json({ success: false, message: "Conversation not found." });
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
   if (!text) return res.status(400).json({ success: false, message: "Message cannot be empty." });
   if (text.length > 2000) return res.status(400).json({ success: false, message: "Message is too long." });
-  const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: req.user.id, role } } }).lean();
+  const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: req.user.id, role: normalizedRole } } }).lean();
   if (!conversation) return res.status(404).json({ success: false, message: "Conversation not found." });
   const recipient = conversation.participants.find((p) => String(p.userId) !== String(req.user.id));
   if (!recipient || !(await usableUser(recipient.userId, recipient.role))) return res.status(403).json({ success: false, message: "Recipient account is unavailable." });
-  const message = await Message.create({ conversationId: conversation._id, senderId: req.user.id, senderRole: role, recipientId: recipient.userId, recipientRole: recipient.role, text: encryptMessage(text), encryptionVersion: 1 });
+  const message = await Message.create({ conversationId: conversation._id, senderId: req.user.id, senderRole: normalizedRole, recipientId: recipient.userId, recipientRole: recipient.role, text: encryptMessage(text), encryptionVersion: 1 });
   await Conversation.updateOne({ _id: conversation._id }, { $set: { lastMessage: message.text, lastMessageAt: message.createdAt } });
   const payload = { ...publicMessage(message), conversationId: String(conversation._id) };
-  const notification = await Notification.create({ userId: recipient.userId, userRole: recipient.role, senderId: req.user.id, relatedEntityId: conversation._id, link: "#messages", title: role === "admin" ? "New message from FixItNow Admin" : "New message from FixItNow Support", message: text.length > 100 ? `${text.slice(0, 100)}…` : text, type: "message" });
+  const notification = await Notification.create({ userId: recipient.userId, userRole: recipient.role, senderId: req.user.id, relatedEntityId: conversation._id, link: "#messages", title: normalizedRole === "admin" ? "New message from FixItNow Admin" : "New message from FixItNow Support", message: text.length > 100 ? `${text.slice(0, 100)}…` : text, type: "message" });
 
   if (recipient.role === "admin") {
     emitToAdminUser(recipient.userId, "message-new", payload);
@@ -127,7 +131,8 @@ router.post("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
 router.patch("/:conversationId/read", requireAuth, asyncHandler(async (req, res) => {
   const role = req.user?.role;
   if (!USER_ROLES.includes(role)) return res.status(403).json({ success: false, message: "User access required." });
-  const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: req.user.id, role } } }).lean();
+  const normalizedRole = conversationRole(role);
+  const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: req.user.id, role: normalizedRole } } }).lean();
   if (!conversation) return res.status(404).json({ success: false, message: "Conversation not found." });
   await Message.updateMany({ conversationId: conversation._id, recipientId: req.user.id, readAt: null }, { $set: { readAt: new Date() } });
   await Notification.updateMany({ userId: req.user.id, relatedEntityId: conversation._id, type: "message", isRead: false }, { $set: { isRead: true } });
