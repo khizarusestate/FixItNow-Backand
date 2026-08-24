@@ -147,19 +147,6 @@ router.get(
       return res.json({ success: true, data: [] });
     }
 
-    const hasServices =
-      (worker.services && worker.services.length > 0) ||
-      worker.primaryServiceName ||
-      worker.primaryServiceCategory;
-
-    if (!hasServices) {
-      return res.json({
-        success: true,
-        data: [],
-        message: "Please select at least one service to view jobs.",
-      });
-    }
-
     const bookings = await Booking.find({
       status: { $in: OPEN_STATUSES },
       workerId: null,
