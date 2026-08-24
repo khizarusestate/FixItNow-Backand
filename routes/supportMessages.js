@@ -8,7 +8,7 @@ import Admin from "../models/Admin.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
 import { decryptStoredMessage, encryptMessage } from "../utils/messageCrypto.js";
-import { emitToUser, isUserConnected } from "../utils/socketManager.js";
+import { emitToAdminUser, emitToUser, isAdminConnected, isUserConnected } from "../utils/socketManager.js";
 import Notification from "../notificationSchema.js";
 import { sendWebPushToUser } from "../utils/webPush.js";
 
@@ -22,7 +22,10 @@ function publicMessage(message) {
 }
 
 async function usableUser(userId, role) {
-  if (role === "admin") return true;
+  if (role === "admin") {
+    const u = await Admin.findOne({ _id: userId, isActive: { $ne: false } }).select("_id").lean();
+    return Boolean(u);
+  }
   if (role === "customer") {
     const u = await Customer.findOne({ _id: userId, isDeleted: { $ne: true } }).select("_id isActive status").lean();
     return u && u.isActive !== false && u.status !== "rejected";
@@ -105,9 +108,19 @@ router.post("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
   await Conversation.updateOne({ _id: conversation._id }, { $set: { lastMessage: message.text, lastMessageAt: message.createdAt } });
   const payload = { ...publicMessage(message), conversationId: String(conversation._id) };
   const notification = await Notification.create({ userId: recipient.userId, userRole: recipient.role, senderId: req.user.id, relatedEntityId: conversation._id, link: "#messages", title: role === "admin" ? "New message from FixItNow Admin" : "New message from FixItNow Support", message: text.length > 100 ? `${text.slice(0, 100)}…` : text, type: "message" });
-  emitToUser(recipient.userId, "message-new", payload);
-  emitToUser(recipient.userId, "notification-new", { id: String(notification._id), title: notification.title, message: notification.message, type: notification.type, relatedEntityId: String(conversation._id), conversationId: String(conversation._id), link: notification.link });
-  if (!isUserConnected(recipient.userId)) void sendWebPushToUser(recipient.userId, recipient.role, { title: notification.title, message: notification.message, type: "message", tag: `support-${conversation._id}`, url: "/" }).catch(() => {});
+
+  if (recipient.role === "admin") {
+    emitToAdminUser(recipient.userId, "message-new", payload);
+    emitToAdminUser(recipient.userId, "notification-new", { id: String(notification._id), title: notification.title, message: notification.message, type: notification.type, relatedEntityId: String(conversation._id), conversationId: String(conversation._id), link: notification.link });
+  } else {
+    emitToUser(recipient.userId, "message-new", payload);
+    emitToUser(recipient.userId, "notification-new", { id: String(notification._id), title: notification.title, message: notification.message, type: notification.type, relatedEntityId: String(conversation._id), conversationId: String(conversation._id), link: notification.link });
+  }
+
+  const recipientConnected = recipient.role === "admin" ? isAdminConnected(recipient.userId) : isUserConnected(recipient.userId);
+  if (!recipientConnected) {
+    void sendWebPushToUser(recipient.userId, recipient.role, { title: notification.title, message: notification.message, type: "message", tag: `support-${conversation._id}`, url: "/" }).catch(() => {});
+  }
   return res.status(201).json({ success: true, data: payload });
 }));
 
