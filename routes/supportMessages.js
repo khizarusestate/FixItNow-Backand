@@ -79,7 +79,7 @@ router.get("/mine", requireAuth, asyncHandler(async (req, res) => {
   const rows = await Promise.all(conversations.map(async (c) => {
     const other = c.participants.find((p) => String(p.userId) !== String(req.user.id));
     const unreadCount = await Message.countDocuments({ conversationId: c._id, recipientId: req.user.id, readAt: null });
-    return { conversationId: String(c._id), participant: other ? { id: String(other.userId), role: other.role, name: await nameOf(other) } : null, lastMessage: c.lastMessage ? { text: decryptStoredMessage(c.lastMessage), createdAt: c.lastMessageAt } : null, unreadCount };
+    return { conversationId: String(c._id), participant: other ? { id: String(other.userId), role: other.role, name: await nameOf(other) } : null, lastMessage: c.lastMessage ? { text: decryptStoredMessage(c.lastMessage, c.lastMessageEncryptionVersion) , createdAt: c.lastMessageAt } : null, unreadCount };
   }));
   return res.json({ success: true, data: rows });
 }));
@@ -109,7 +109,7 @@ router.post("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
   const recipient = conversation.participants.find((p) => String(p.userId) !== String(req.user.id));
   if (!recipient || !(await usableUser(recipient.userId, recipient.role))) return res.status(403).json({ success: false, message: "Recipient account is unavailable." });
   const message = await Message.create({ conversationId: conversation._id, senderId: req.user.id, senderRole: normalizedRole, recipientId: recipient.userId, recipientRole: recipient.role, text: encryptMessage(text), encryptionVersion: 1 });
-  await Conversation.updateOne({ _id: conversation._id }, { $set: { lastMessage: message.text, lastMessageAt: message.createdAt } });
+  await Conversation.updateOne({ _id: conversation._id }, { $set: { lastMessage: message.text, lastMessageEncryptionVersion: 1, lastMessageAt: message.createdAt } });
   const payload = { ...publicMessage(message), conversationId: String(conversation._id) };
   const notification = await Notification.create({ userId: recipient.userId, userRole: recipient.role, senderId: req.user.id, relatedEntityId: conversation._id, link: "#messages", title: normalizedRole === "admin" ? "New message from FixItNow Admin" : "New message from FixItNow Support", message: text.length > 100 ? `${text.slice(0, 100)}…` : text, type: "message" });
 
@@ -122,9 +122,7 @@ router.post("/:conversationId", requireAuth, asyncHandler(async (req, res) => {
   }
 
   const recipientConnected = recipient.role === "admin" ? isAdminConnected(recipient.userId) : isUserConnected(recipient.userId);
-  if (!recipientConnected) {
-    void sendWebPushToUser(recipient.userId, recipient.role, { title: notification.title, message: notification.message, type: "message", tag: `support-${conversation._id}`, url: "/" }).catch(() => {});
-  }
+  if (!recipientConnected) void sendWebPushToUser(recipient.userId, recipient.role, { title: notification.title, message: notification.message, type: "message", tag: `support-${conversation._id}`, url: "/" }).catch(() => {});
   return res.status(201).json({ success: true, data: payload });
 }));
 
