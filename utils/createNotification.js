@@ -1,5 +1,5 @@
 import Notification from "../notificationSchema.js";
-import { emitToAdminUser, emitToUser } from "./socketManager.js";
+import { emitToAdmin, emitToAdminUser, emitToUser } from "./socketManager.js";
 import { sendWebPushToUser } from "./webPush.js";
 import NotificationPreference from "../models/NotificationPreference.js";
 import {
@@ -21,6 +21,20 @@ const NOTIFICATION_TYPE_PREFERENCE_KEYS = {
   booking_received: "bookingReceived",
   worker_assigned: "workerAssigned",
   job_completed: "jobCompleted",
+};
+
+const ADMIN_REFRESH_TYPES = {
+  new_booking: "bookings",
+  claim_pending: "bookings",
+  claim_approved: "bookings",
+  claim_rejected: "bookings",
+  booking_received: "bookings",
+  worker_assigned: "bookings",
+  job_completed: "bookings",
+  new_worker: "workers",
+  new_customer: "customers",
+  new_review: "reviews",
+  new_advertisement: "advertisements",
 };
 
 async function getNotificationDeliveryPreferences(userId, userRole, type) {
@@ -123,6 +137,17 @@ export async function createNotification({
     if (preferences.inAppEnabled) {
       if (userRole === "admin") {
         emitToAdminUser(String(userId), "notification-new", payload);
+
+        // Admin pages subscribe to the shared `refresh` event through
+        // useRefresh(). Persisted admin notifications are therefore also
+        // live UI invalidation signals, not just bell notifications.
+        const refreshType = ADMIN_REFRESH_TYPES[type];
+        if (refreshType) {
+          emitToAdmin("refresh", {
+            type: refreshType,
+            timestamp: new Date().toISOString(),
+          });
+        }
       } else {
         emitToUser(String(userId), "notification-new", payload);
       }
