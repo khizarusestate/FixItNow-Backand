@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import Booking from "../bookingSchema.js";
 import Conversation from "../models/Conversation.js";
-import { emitToUser, isUserConnected } from "./socketManager.js";
+import { emitToAdminUser, emitToUser, isAdminConnected, isUserConnected } from "./socketManager.js";
 import { sendWebPushToUser } from "./webPush.js";
 
 const ACTIVE_STATUSES = new Set(["worker-assigned", "on-the-way", "in-progress"]);
@@ -16,15 +16,17 @@ async function authorizeSupportCall(socket, conversationId, targetUserId) {
   }).select("_id").lean();
 }
 
-async function authorizeCall(socket, bookingId, targetUserId) {
-  if (!mongoose.Types.ObjectId.isValid(bookingId) || !mongoose.Types.ObjectId.isValid(targetUserId)) return null;
+async function authorizeSupportUserSignal(socket, conversationId) {
+  if (socket.isAdmin || !socket.userId || !mongoose.Types.ObjectId.isValid(conversationId)) return null;
+  return Conversation.findOne({
+    _id: conversationId,
+    type: "support",
+    participants: { $elemMatch: { userId: new mongoose.Types.ObjectId(socket.userId), role: socket.userRole } },
+  }).select("_id").lean();
+}
 
-  if (socket.isAdmin) {
-    return authorizeSupportCall(socket, bookingId, targetUserId);
-  }
-
-  if (!socket.userId || !socket.userRole) return null;
-
+async function authorizeBookingCall(socket, bookingId, targetUserId) {
+  if (!socket.userId || !socket.userRole || !mongoose.Types.ObjectId.isValid(bookingId) || !mongoose.Types.ObjectId.isValid(targetUserId)) return null;
   return Booking.findOne({
     _id: bookingId,
     isDeleted: false,
@@ -38,35 +40,39 @@ async function authorizeCall(socket, bookingId, targetUserId) {
 export function registerVoiceCallSocketHandlers(socket) {
   socket.on("voice-call-start", async (data = {}) => {
     try {
-      const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
-      if (!booking) return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this conversation or booking." });
+      if (!socket.isAdmin) {
+        const booking = await authorizeBookingCall(socket, data.bookingId, data.targetUserId);
+        if (!booking) return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this booking." });
+        const callId = String(data.callId || "");
+        if (!callId) return socket.emit("voice-call-error", { message: "Invalid voice call." });
+        const targetUserId = String(data.targetUserId);
+        const callerName = String(data.participantName || (socket.userRole === "worker" ? "Worker" : "Customer"));
+        emitToUser(targetUserId, "voice-call-incoming", { bookingId: String(booking._id), callId, callerId: String(socket.userId), callerRole: socket.userRole, callerName, targetUserId });
+        if (!isUserConnected(targetUserId)) {
+          void sendWebPushToUser(targetUserId, socket.userRole === "worker" ? "customer" : "worker", {
+            title: "Incoming voice call",
+            message: `${callerName} is calling you on FixItNow.`,
+            type: "urgent",
+            tag: `voice-call-${callId}`,
+            url: "/",
+          }).catch(() => {});
+        }
+        return;
+      }
 
-      const targetUserId = String(data.targetUserId);
+      const conversation = await authorizeSupportCall(socket, data.bookingId, data.targetUserId);
+      if (!conversation) return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this support conversation." });
       const callId = String(data.callId || "");
       if (!callId) return socket.emit("voice-call-error", { message: "Invalid voice call." });
-
-      const callerName = String(
-        data.participantName || (socket.isAdmin ? "Admin" : socket.userRole === "worker" ? "Worker" : "Customer"),
-      );
-
+      const targetUserId = String(data.targetUserId);
       emitToUser(targetUserId, "voice-call-incoming", {
-        bookingId: String(booking._id),
+        bookingId: String(conversation._id),
         callId,
-        callerId: String(socket.userId || socket.adminId || "admin"),
-        callerRole: socket.isAdmin ? "admin" : socket.userRole,
-        callerName,
+        callerId: String(socket.adminId),
+        callerRole: "admin",
+        callerName: String(data.participantName || "Admin"),
         targetUserId,
       });
-
-      if (!socket.isAdmin && !isUserConnected(targetUserId)) {
-        void sendWebPushToUser(targetUserId, socket.userRole === "worker" ? "customer" : "worker", {
-          title: "Incoming voice call",
-          message: `${callerName} is calling you on FixItNow.`,
-          type: "urgent",
-          tag: `voice-call-${callId}`,
-          url: "/",
-        }).catch(() => {});
-      }
     } catch {
       socket.emit("voice-call-error", { message: "Could not start the voice call." });
     }
@@ -74,12 +80,37 @@ export function registerVoiceCallSocketHandlers(socket) {
 
   socket.on("voice-call-signal", async (data = {}) => {
     try {
-      const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
-      if (!booking || !data.callId || !data.signal?.type) return;
-      emitToUser(String(data.targetUserId), "voice-call-signal", {
-        bookingId: String(booking._id),
+      if (socket.isAdmin) {
+        const conversation = await authorizeSupportCall(socket, data.bookingId, data.targetUserId);
+        if (!conversation || !data.callId || !data.signal?.type) return;
+        emitToUser(String(data.targetUserId), "voice-call-signal", {
+          bookingId: String(conversation._id),
+          callId: String(data.callId),
+          callerId: String(socket.adminId),
+          targetUserId: String(data.targetUserId),
+          signal: data.signal,
+        });
+        return;
+      }
+
+      const booking = await authorizeBookingCall(socket, data.bookingId, data.targetUserId);
+      if (booking && data.callId && data.signal?.type) {
+        emitToUser(String(data.targetUserId), "voice-call-signal", {
+          bookingId: String(booking._id),
+          callId: String(data.callId),
+          callerId: String(socket.userId),
+          targetUserId: String(data.targetUserId),
+          signal: data.signal,
+        });
+        return;
+      }
+
+      const conversation = await authorizeSupportUserSignal(socket, data.bookingId);
+      if (!conversation || !data.callId || !data.signal?.type || !isAdminConnected(data.targetUserId)) return;
+      emitToAdminUser(String(data.targetUserId), "voice-call-signal", {
+        bookingId: String(conversation._id),
         callId: String(data.callId),
-        callerId: String(socket.userId || socket.adminId || "admin"),
+        callerId: String(socket.userId),
         targetUserId: String(data.targetUserId),
         signal: data.signal,
       });
@@ -90,9 +121,22 @@ export function registerVoiceCallSocketHandlers(socket) {
 
   socket.on("voice-call-end", async (data = {}) => {
     try {
-      const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
-      if (!booking || !data.callId) return;
-      emitToUser(String(data.targetUserId), "voice-call-ended", { bookingId: String(booking._id), callId: String(data.callId) });
+      if (socket.isAdmin) {
+        const conversation = await authorizeSupportCall(socket, data.bookingId, data.targetUserId);
+        if (!conversation || !data.callId) return;
+        emitToUser(String(data.targetUserId), "voice-call-ended", { bookingId: String(conversation._id), callId: String(data.callId) });
+        return;
+      }
+
+      const booking = await authorizeBookingCall(socket, data.bookingId, data.targetUserId);
+      if (booking && data.callId) {
+        emitToUser(String(data.targetUserId), "voice-call-ended", { bookingId: String(booking._id), callId: String(data.callId) });
+        return;
+      }
+
+      const conversation = await authorizeSupportUserSignal(socket, data.bookingId);
+      if (!conversation || !data.callId || !isAdminConnected(data.targetUserId)) return;
+      emitToAdminUser(String(data.targetUserId), "voice-call-ended", { bookingId: String(conversation._id), callId: String(data.callId) });
     } catch {
       // Ending a call is best-effort.
     }
