@@ -12,44 +12,34 @@ async function authorizeSupportCall(socket, conversationId, targetUserId) {
   return Conversation.findOne({
     _id: conversationId,
     type: "support",
-    participants: {
-      $elemMatch: {
-        userId: new mongoose.Types.ObjectId(targetUserId),
-        role: { $in: [...USER_ROLES] },
-      },
-    },
+    participants: { $elemMatch: { userId: new mongoose.Types.ObjectId(targetUserId), role: { $in: [...USER_ROLES] } } },
   }).select("_id").lean();
 }
 
 async function authorizeCall(socket, bookingId, targetUserId) {
-  if (!socket.userId || !socket.userRole || !mongoose.Types.ObjectId.isValid(bookingId)) return null;
-  if (!mongoose.Types.ObjectId.isValid(targetUserId)) return null;
+  if (!mongoose.Types.ObjectId.isValid(bookingId) || !mongoose.Types.ObjectId.isValid(targetUserId)) return null;
 
   if (socket.isAdmin) {
     return authorizeSupportCall(socket, bookingId, targetUserId);
   }
 
-  const booking = await Booking.findOne({
+  if (!socket.userId || !socket.userRole) return null;
+
+  return Booking.findOne({
     _id: bookingId,
     isDeleted: false,
     status: { $in: [...ACTIVE_STATUSES] },
     ...(socket.userRole === "worker"
       ? { workerId: socket.userId, customerId: targetUserId }
       : { customerId: socket.userId, workerId: targetUserId }),
-  })
-    .select("_id customerId workerId status")
-    .lean();
-
-  return booking || null;
+  }).select("_id customerId workerId status").lean();
 }
 
 export function registerVoiceCallSocketHandlers(socket) {
   socket.on("voice-call-start", async (data = {}) => {
     try {
       const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
-      if (!booking) {
-        return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this conversation or booking." });
-      }
+      if (!booking) return socket.emit("voice-call-error", { message: "Voice calls are unavailable for this conversation or booking." });
 
       const targetUserId = String(data.targetUserId);
       const callId = String(data.callId || "");
@@ -69,17 +59,13 @@ export function registerVoiceCallSocketHandlers(socket) {
       });
 
       if (!socket.isAdmin && !isUserConnected(targetUserId)) {
-        void sendWebPushToUser(
-          targetUserId,
-          socket.userRole === "worker" ? "customer" : "worker",
-          {
-            title: "Incoming voice call",
-            message: `${callerName} is calling you on FixItNow.`,
-            type: "urgent",
-            tag: `voice-call-${callId}`,
-            url: "/",
-          },
-        ).catch(() => {});
+        void sendWebPushToUser(targetUserId, socket.userRole === "worker" ? "customer" : "worker", {
+          title: "Incoming voice call",
+          message: `${callerName} is calling you on FixItNow.`,
+          type: "urgent",
+          tag: `voice-call-${callId}`,
+          url: "/",
+        }).catch(() => {});
       }
     } catch {
       socket.emit("voice-call-error", { message: "Could not start the voice call." });
@@ -90,7 +76,6 @@ export function registerVoiceCallSocketHandlers(socket) {
     try {
       const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
       if (!booking || !data.callId || !data.signal?.type) return;
-
       emitToUser(String(data.targetUserId), "voice-call-signal", {
         bookingId: String(booking._id),
         callId: String(data.callId),
@@ -107,10 +92,7 @@ export function registerVoiceCallSocketHandlers(socket) {
     try {
       const booking = await authorizeCall(socket, data.bookingId, data.targetUserId);
       if (!booking || !data.callId) return;
-      emitToUser(String(data.targetUserId), "voice-call-ended", {
-        bookingId: String(booking._id),
-        callId: String(data.callId),
-      });
+      emitToUser(String(data.targetUserId), "voice-call-ended", { bookingId: String(booking._id), callId: String(data.callId) });
     } catch {
       // Ending a call is best-effort.
     }
