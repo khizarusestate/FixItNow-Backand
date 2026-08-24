@@ -545,13 +545,31 @@ router.get('/bookings', requireAdmin, asyncHandler(async (req, res) => {
   const stats = {
     open: (counts.open || 0) + (counts.pending || 0) + (counts.approved || 0),
     claimPending: counts['claim-pending'] || 0,
+
+    assigned:
+      (counts['worker-assigned'] || 0) +
+      (counts.assigned || 0),
+
     workerAssigned:
       (counts['worker-assigned'] || 0) +
-      (counts.assigned || 0) +
-      (counts['in-progress'] || 0),
+      (counts.assigned || 0),
+
+    onTheWay: counts['on-the-way'] || 0,
+
+    inProgress: counts['in-progress'] || 0,
+
     completed: counts.completed || 0,
-    cancelled: (counts.cancelled || 0) + (counts.rejected || 0),
-    total: Object.values(counts).reduce((a, b) => a + b, 0),
+
+    cancelled:
+      (counts.cancelled || 0) +
+      (counts.rejected || 0),
+
+    rejected: counts.rejected || 0,
+
+    total: Object.values(counts).reduce(
+      (a, b) => a + b,
+      0
+    ),
   };
 
   return res.json({
