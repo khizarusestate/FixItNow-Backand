@@ -5,7 +5,6 @@ import WorkerLiveLocation from "../models/WorkerLiveLocation.js";
 
 const ARRIVAL_RADIUS_METERS = 100;
 const MAX_RELIABLE_ACCURACY_METERS = 100;
-const LOCATION_RETENTION_MS = 60 * 60 * 1000;
 
 function distanceMeters(lat1, lon1, lat2, lon2) {
   const toRad = (value) => (value * Math.PI) / 180;
@@ -116,9 +115,6 @@ export function initializeSocketIO(socketIOInstance) {
           );
         }
 
-        // Keep the canonical booking location in sync as well as the dedicated
-        // live-location record. This makes refresh/reload and booking-list APIs
-        // consistent with the realtime map.
         await Booking.updateOne(
           { _id: booking._id, workerId: socket.userId, isDeleted: false },
           {
