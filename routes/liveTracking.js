@@ -26,7 +26,7 @@ router.get(
       customerId: req.customer.id,
       isDeleted: false,
     })
-      .select("latitude longitude location address status workerId")
+      .select("latitude longitude location address status workerId currentLatitude currentLongitude lastLocationUpdate")
       .lean();
 
     if (!booking) {
@@ -34,16 +34,18 @@ router.get(
     }
 
     const active = ["assigned", "worker-assigned", "on-the-way", "in-progress"].includes(booking.status);
+    const destination =
+      validCoordinate(booking.latitude, -90, 90) && validCoordinate(booking.longitude, -180, 180)
+        ? { latitude: Number(booking.latitude), longitude: Number(booking.longitude) }
+        : null;
+
     if (!active || !booking.workerId) {
       return res.json({
         success: true,
         data: {
           active: false,
           status: booking.status,
-          destination:
-            validCoordinate(booking.latitude, -90, 90) && validCoordinate(booking.longitude, -180, 180)
-              ? { latitude: Number(booking.latitude), longitude: Number(booking.longitude) }
-              : null,
+          destination,
           worker: null,
         },
       });
@@ -56,25 +58,33 @@ router.get(
       .select("latitude longitude accuracy heading speed updatedAt")
       .lean();
 
+    const worker = live && validCoordinate(live.latitude, -90, 90) && validCoordinate(live.longitude, -180, 180)
+      ? {
+          latitude: live.latitude,
+          longitude: live.longitude,
+          accuracy: live.accuracy,
+          heading: live.heading,
+          speed: live.speed,
+          updatedAt: live.updatedAt,
+        }
+      : validCoordinate(booking.currentLatitude, -90, 90) && validCoordinate(booking.currentLongitude, -180, 180)
+        ? {
+            latitude: booking.currentLatitude,
+            longitude: booking.currentLongitude,
+            accuracy: null,
+            heading: null,
+            speed: null,
+            updatedAt: booking.lastLocationUpdate,
+          }
+        : null;
+
     return res.json({
       success: true,
       data: {
         active: true,
         status: booking.status,
-        destination:
-          validCoordinate(booking.latitude, -90, 90) && validCoordinate(booking.longitude, -180, 180)
-            ? { latitude: Number(booking.latitude), longitude: Number(booking.longitude) }
-            : null,
-        worker: live
-          ? {
-              latitude: live.latitude,
-              longitude: live.longitude,
-              accuracy: live.accuracy,
-              heading: live.heading,
-              speed: live.speed,
-              updatedAt: live.updatedAt,
-            }
-          : null,
+        destination,
+        worker,
       },
     });
   }),
