@@ -1,6 +1,52 @@
+import mongoose from 'mongoose';
 import { createNotification, notifyAllAdmins } from '../utils/createNotification.js';
 
-export function initNotificationService() { console.log('✅ Notification Service Initialized'); }
+let registrationWatchersStarted = false;
+
+async function startRegistrationWatchers() {
+  if (registrationWatchersStarted) return;
+  registrationWatchersStarted = true;
+  try {
+    const Customer = (await import('../customerSchema.js')).default;
+    const Worker = (await import('../workerSchema.js')).default;
+    const Advertisement = (await import('../models/Advertisement.js')).default;
+
+    const watch = (Model, handler) => {
+      try {
+        const stream = Model.watch([], { fullDocument: 'updateLookup' });
+        stream.on('change', (change) => {
+          if (change.operationType !== 'insert' || !change.fullDocument) return;
+          Promise.resolve(handler(change.fullDocument)).catch(() => {});
+        });
+        stream.on('error', () => {});
+      } catch {
+        // Standalone MongoDB deployments do not support change streams.
+        // Existing route-level notifications continue to work there.
+      }
+    };
+
+    watch(Customer, (customer) => notifyAdminNewCustomer(customer));
+    watch(Worker, (worker) => notifyAdminNewWorker(worker));
+    watch(Advertisement, (ad) => notifyAdminNewAdvertisement(ad));
+  } catch {
+    // Notification delivery must never prevent the API from starting.
+  }
+}
+
+function ensureRegistrationWatchers() {
+  if (mongoose.connection.readyState === 1) {
+    startRegistrationWatchers().catch(() => {});
+  } else {
+    mongoose.connection.once('connected', () => startRegistrationWatchers().catch(() => {}));
+  }
+}
+
+ensureRegistrationWatchers();
+
+export function initNotificationService() {
+  ensureRegistrationWatchers();
+  console.log('✅ Notification Service Initialized');
+}
 
 export function notifyAdminNewBooking(booking) { return notifyAllAdmins({ title: 'New Booking Request 🔔', message: `New ${booking.serviceTitle} booking from ${booking.customerName || 'Customer'}. Price: ₨${booking.price}`, type: 'new_booking', relatedEntityId: booking._id }); }
 export function notifyAdminNewWorker(worker) { return notifyAllAdmins({ title: 'New Worker Registration 👷', message: `${worker.fullName} registered as ${worker.primaryServiceCategory || 'worker'}.`, type: 'new_worker', relatedEntityId: worker._id }); }
@@ -17,7 +63,6 @@ export async function notifyWorkerNewJob(workers, booking) {
 export function notifyWorkerClaimApproved(workerId, booking) { return createNotification({ userId: workerId, userRole: 'worker', title: 'Claim Approved ✅', message: `Your claim for ${booking.serviceTitle} was approved. The job is assigned to you.`, type: 'claim_approved', relatedEntityId: booking._id }); }
 export function notifyWorkerClaimRejected(workerId, booking, reason) { return createNotification({ userId: workerId, userRole: 'worker', title: 'Claim Rejected ❌', message: `Your claim for ${booking.serviceTitle} was rejected. ${reason || 'Please try another job.'}`, type: 'claim_rejected', relatedEntityId: booking._id }); }
 export function notifyWorkerCustomerCompleted(workerId, booking) { return createNotification({ userId: workerId, userRole: 'worker', title: 'Customer Marked Job Done ✓', message: `The customer marked ${booking.serviceTitle} as done. Open the job to complete your side.`, type: 'customer_completed', relatedEntityId: booking._id }); }
-
 export function notifyCustomerBookingReceived(customerId, booking) { return createNotification({ userId: customerId, userRole: 'customer', title: 'Booking Received ✓', message: `We received your ${booking.serviceTitle} request. Workers can claim it now.`, type: 'booking_received', relatedEntityId: booking._id }); }
 export function notifyCustomerWorkerAssigned(customerId, booking, worker) { return createNotification({ userId: customerId, userRole: 'customer', title: 'Worker Assigned 👷', message: `${worker.fullName} has been assigned to your ${booking.serviceTitle} job.`, type: 'worker_assigned', relatedEntityId: booking._id }); }
 export function notifyCustomerWorkerOnTheWay(customerId, booking) { return createNotification({ userId: customerId, userRole: 'customer', title: 'Worker On The Way 🚗', message: `Your worker is on the way to your ${booking.serviceTitle} job.`, type: 'worker_on_the_way', relatedEntityId: booking._id }); }
