@@ -50,7 +50,7 @@ async function ensureUserConversation(req) {
   });
 }
 
-function userConversationView(conversation, role) {
+function userConversationView(conversation, role, unreadCount = 0) {
   const participant = conversation.participants.find((item) => item.role === role);
   return {
     id: String(conversation._id),
@@ -58,6 +58,7 @@ function userConversationView(conversation, role) {
     participant: participant ? { id: String(participant.userId), role: participant.role, name: participant.name } : null,
     lastMessageAt: conversation.lastMessageAt,
     lastMessagePreview: conversation.lastMessagePreview,
+    unreadCount,
   };
 }
 
@@ -79,7 +80,13 @@ router.get("/conversations", requireAuth, asyncHandler(async (req, res) => {
   if (!USER_ROLES.includes(req.user?.role)) return res.status(403).json({ success: false, message: "User access required." });
   const conversation = await ensureUserConversation(req);
   if (!conversation) return res.status(404).json({ success: false, message: "User account not found." });
-  return res.json({ success: true, data: [userConversationView(conversation, req.user.role)] });
+  const unreadCount = await Message.countDocuments({
+    conversationId: conversation._id,
+    recipientId: objectId(req.user.id),
+    senderRole: "admin",
+    readAt: null,
+  });
+  return res.json({ success: true, data: [userConversationView(conversation, req.user.role, unreadCount)] });
 }));
 
 router.get("/conversations/:conversationId", requireAuth, asyncHandler(async (req, res) => {
@@ -104,7 +111,8 @@ router.post("/conversations", requireAuth, asyncHandler(async (req, res) => {
   if (!USER_ROLES.includes(req.user?.role)) return res.status(403).json({ success: false, message: "User access required." });
   const conversation = await ensureUserConversation(req);
   if (!conversation) return res.status(404).json({ success: false, message: "User account not found." });
-  return res.status(201).json({ success: true, data: userConversationView(conversation, req.user.role) });
+  const unreadCount = await Message.countDocuments({ conversationId: conversation._id, recipientId: objectId(req.user.id), senderRole: "admin", readAt: null });
+  return res.status(201).json({ success: true, data: userConversationView(conversation, req.user.role, unreadCount) });
 }));
 
 router.post("/conversations/:conversationId/messages", requireAuth, asyncHandler(async (req, res) => {
@@ -128,7 +136,7 @@ router.patch("/conversations/:conversationId/read", requireAuth, asyncHandler(as
   if (!USER_ROLES.includes(req.user?.role)) return res.status(403).json({ success: false, message: "User access required." });
   const conversation = await Conversation.findOne({ _id: req.params.conversationId, type: "support", participants: { $elemMatch: { userId: objectId(req.user.id), role: req.user.role } } });
   if (!conversation) return res.status(404).json({ success: false, message: "Conversation not found." });
-  await Message.updateMany({ conversationId: conversation._id, recipientId: objectId(req.user.id), readAt: null }, { $set: { readAt: new Date() } });
+  await Message.updateMany({ conversationId: conversation._id, recipientId: objectId(req.user.id), senderRole: "admin", readAt: null }, { $set: { readAt: new Date() } });
   return res.json({ success: true, message: "Messages marked as read." });
 }));
 
