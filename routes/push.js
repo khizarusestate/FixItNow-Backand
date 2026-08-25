@@ -5,11 +5,11 @@ import PushSubscription from "../pushSubscriptionSchema.js";
 import Customer from "../customerSchema.js";
 import Worker from "../workerSchema.js";
 import Admin from "../models/Admin.js";
-import { ENV_SUPER_ADMIN_ID } from "../services/envSuperAdmin.js";
+import { ENV_SUPER_ADMIN_ID, isEnvSuperAdminToken } from "../services/envSuperAdmin.js";
 import { getVapidPublicKey } from "../utils/webPush.js";
 
 function isEnvSuperAdminUser(user) {
-  return user?.role === "admin" && String(user?.id) === ENV_SUPER_ADMIN_ID;
+  return isEnvSuperAdminToken(user);
 }
 
 const router = express.Router();
@@ -55,6 +55,10 @@ router.patch(
 
     if (isEnvSuperAdminUser(req.user)) {
       if (!devicePushEnabled) {
+        await PushSubscription.deleteMany({
+          userId: ENV_SUPER_ADMIN_ID,
+          userRole: "super_admin",
+        });
         await PushSubscription.deleteMany({
           userId: ENV_SUPER_ADMIN_ID,
           userRole: "admin",
