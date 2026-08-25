@@ -23,19 +23,19 @@ export function parseCookieHeader(header = "") {
 }
 
 export function getAccessTokenFromRequest(req) {
-  // HttpOnly cookie is the authoritative session when cookie auth is enabled.
-  // This prevents a stale/invalid legacy Bearer token from overriding a valid
-  // freshly-issued cookie session. Keep Bearer as a fallback for legacy clients.
-  const cookies = parseCookieHeader(req.headers?.cookie);
-  if (USE_HTTPONLY_AUTH && cookies[ACCESS_COOKIE]) {
-    return cookies[ACCESS_COOKIE];
-  }
-
+  // Browser SPAs send the currently active role's access token explicitly.
+  // Prefer that Bearer token when present; otherwise fall back to the HttpOnly
+  // cookie for clients that rely exclusively on cookie-based authentication.
+  // This avoids a shared/stale fixitnow_access cookie overriding a valid token
+  // for the active customer, worker, or admin session and causing role-mismatch
+  // errors such as "Admin/Worker/Customer access required".
   const header = req.headers?.authorization || "";
   if (header.startsWith("Bearer ")) {
-    return header.slice(7).trim();
+    const bearerToken = header.slice(7).trim();
+    if (bearerToken) return bearerToken;
   }
 
+  const cookies = parseCookieHeader(req.headers?.cookie);
   return cookies[ACCESS_COOKIE] || "";
 }
 
