@@ -2,35 +2,31 @@ import Notification from "../notificationSchema.js";
 import { emitToAdmin, emitToAdminUser, emitToUser } from "./socketManager.js";
 import { sendWebPushToUser } from "./webPush.js";
 import NotificationPreference from "../models/NotificationPreference.js";
-import {
-  ENV_SUPER_ADMIN_ID,
-  isEnvSuperAdminConfigured,
-} from "../services/envSuperAdmin.js";
+import { ENV_SUPER_ADMIN_ID, isEnvSuperAdminConfigured } from "../services/envSuperAdmin.js";
 import logger from "./logger.js";
 
 const NOTIFICATION_TYPE_PREFERENCE_KEYS = {
   new_booking: "newBooking",
   new_worker: "newWorker",
   new_customer: "newCustomer",
-  claim_pending: "claimPending",
-  new_review: "newReview",
   new_advertisement: "newAdvertisement",
+  new_review: "newReview",
+  claim_pending: "claimPending",
+  support_chat: "supportChat",
   new_job: "newJob",
   claim_approved: "claimApproved",
   claim_rejected: "claimRejected",
+  customer_completed: "customerCompleted",
   booking_received: "bookingReceived",
   worker_assigned: "workerAssigned",
+  worker_on_the_way: "workerOnTheWay",
+  worker_completed: "workerCompleted",
   job_completed: "jobCompleted",
 };
 
 const ADMIN_REFRESH_TYPES = {
   new_booking: "bookings",
   claim_pending: "bookings",
-  claim_approved: "bookings",
-  claim_rejected: "bookings",
-  booking_received: "bookings",
-  worker_assigned: "bookings",
-  job_completed: "bookings",
   new_worker: "workers",
   new_customer: "customers",
   new_review: "reviews",
@@ -41,13 +37,8 @@ async function getNotificationDeliveryPreferences(userId, userRole, type) {
   try {
     const prefs = await NotificationPreference.findOne({ userId }).lean();
     const preferenceKey = NOTIFICATION_TYPE_PREFERENCE_KEYS[type];
-    const typeEnabled = preferenceKey
-      ? prefs?.notificationTypes?.[preferenceKey] !== false
-      : true;
+    const typeEnabled = preferenceKey ? prefs?.notificationTypes?.[preferenceKey] !== false : true;
 
-    // The profile Settings > Notifications switch is the authoritative
-    // device-level push preference. It is deliberately checked server-side so
-    // a stale browser subscription can never bypass the user's OFF setting.
     let devicePushEnabled = true;
     if (userRole === "customer") {
       const Customer = (await import("../customerSchema.js")).default;
@@ -69,25 +60,15 @@ async function getNotificationDeliveryPreferences(userId, userRole, type) {
 
     return {
       inAppEnabled: prefs?.inAppEnabled !== false,
-      pushEnabled: (prefs?.pushEnabled !== false) && devicePushEnabled,
+      pushEnabled: prefs?.pushEnabled !== false && devicePushEnabled,
       typeEnabled,
     };
   } catch (err) {
-    logger.warn("Notification preference lookup failed", {
-      userId,
-      userRole,
-      type,
-      error: err?.message,
-    });
+    logger.warn("Notification preference lookup failed", { userId, userRole, type, error: err?.message });
     return { inAppEnabled: true, pushEnabled: true, typeEnabled: true };
   }
 }
 
-/**
- * Persist a notification and deliver it through the channels enabled by the user.
- * inAppEnabled controls socket/live delivery; the Profile Settings notification
- * switch controls browser push delivery server-side as well as subscription state.
- */
 export async function createNotification({
   userId,
   userRole,
@@ -104,11 +85,8 @@ export async function createNotification({
 
   try {
     const preferences = await getNotificationDeliveryPreferences(userId, userRole, type);
-
     if (!preferences.typeEnabled) return null;
-    if (!preferences.inAppEnabled && (!deliverPush || !preferences.pushEnabled)) {
-      return null;
-    }
+    if (!preferences.inAppEnabled && !preferences.pushEnabled) return null;
 
     const doc = await Notification.create({
       userId,
@@ -137,17 +115,8 @@ export async function createNotification({
     if (preferences.inAppEnabled) {
       if (userRole === "admin") {
         emitToAdminUser(String(userId), "notification-new", payload);
-
-        // Admin pages subscribe to the shared `refresh` event through
-        // useRefresh(). Persisted admin notifications are therefore also
-        // live UI invalidation signals, not just bell notifications.
         const refreshType = ADMIN_REFRESH_TYPES[type];
-        if (refreshType) {
-          emitToAdmin("refresh", {
-            type: refreshType,
-            timestamp: new Date().toISOString(),
-          });
-        }
+        if (refreshType) emitToAdmin("refresh", { type: refreshType, timestamp: new Date().toISOString() });
       } else {
         emitToUser(String(userId), "notification-new", payload);
       }
@@ -165,55 +134,25 @@ export async function createNotification({
           type: payload.type,
         },
         pushOptions,
-      ).catch((err) => {
-        logger.warn("Web push dispatch failed", { error: err?.message });
-      });
+      ).catch((err) => logger.warn("Web push dispatch failed", { error: err?.message }));
     }
 
     return doc;
   } catch (err) {
-    logger.warn("createNotification failed", {
-      userId,
-      userRole,
-      error: err.message,
-    });
+    logger.warn("createNotification failed", { userId, userRole, error: err.message });
     return null;
   }
 }
 
-export async function notifyAllAdmins({
-  title,
-  message,
-  type = "info",
-  senderId = null,
-  relatedEntityId = null,
-  link = "",
-}) {
+export async function notifyAllAdmins({ title, message, type = "info", senderId = null, relatedEntityId = null, link = "" }) {
   try {
     const Admin = (await import("../models/Admin.js")).default;
-    const admins = await Admin.find({
-      isActive: true,
-      role: { $in: ["admin", "super_admin"] },
-    })
-      .select("_id")
-      .lean();
+    const admins = await Admin.find({ isActive: true, role: { $in: ["admin", "super_admin"] } }).select("_id").lean();
     const targetIds = admins.map((a) => String(a._id));
-    if (isEnvSuperAdminConfigured()) {
-      targetIds.push(ENV_SUPER_ADMIN_ID);
-    }
-    const uniqueIds = [...new Set(targetIds)];
+    if (isEnvSuperAdminConfigured()) targetIds.push(ENV_SUPER_ADMIN_ID);
     await Promise.all(
-      uniqueIds.map((userId) =>
-        createNotification({
-          userId,
-          userRole: "admin",
-          title,
-          message,
-          type,
-          senderId,
-          relatedEntityId,
-          link,
-        }),
+      [...new Set(targetIds)].map((userId) =>
+        createNotification({ userId, userRole: "admin", title, message, type, senderId, relatedEntityId, link }),
       ),
     );
   } catch (err) {
