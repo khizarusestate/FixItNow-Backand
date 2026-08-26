@@ -6,10 +6,17 @@ import Booking from "../bookingSchema.js";
 import WorkerLiveLocation from "../models/WorkerLiveLocation.js";
 
 const router = express.Router();
+const LOCATION_STALE_AFTER_MS = 30_000;
 
 function validCoordinate(value, min, max) {
   const n = Number(value);
   return Number.isFinite(n) && n >= min && n <= max;
+}
+
+function isFresh(timestamp) {
+  if (!timestamp) return false;
+  const age = Date.now() - new Date(timestamp).getTime();
+  return Number.isFinite(age) && age >= 0 && age <= LOCATION_STALE_AFTER_MS;
 }
 
 router.get(
@@ -40,25 +47,17 @@ router.get(
         : null;
 
     if (!active || !booking.workerId) {
-      return res.json({
-        success: true,
-        data: {
-          active: false,
-          status: booking.status,
-          destination,
-          worker: null,
-        },
-      });
+      return res.json({ success: true, data: { active: false, status: booking.status, destination, worker: null } });
     }
 
-    const live = await WorkerLiveLocation.findOne({
-      bookingId: booking._id,
-      workerId: booking.workerId,
-    })
+    const live = await WorkerLiveLocation.findOne({ bookingId: booking._id, workerId: booking.workerId })
       .select("latitude longitude accuracy heading speed updatedAt")
       .lean();
 
-    const worker = live && validCoordinate(live.latitude, -90, 90) && validCoordinate(live.longitude, -180, 180)
+    const liveFresh = live && isFresh(live.updatedAt);
+    const bookingFresh = isFresh(booking.lastLocationUpdate);
+
+    const worker = liveFresh && validCoordinate(live.latitude, -90, 90) && validCoordinate(live.longitude, -180, 180)
       ? {
           latitude: live.latitude,
           longitude: live.longitude,
@@ -67,7 +66,7 @@ router.get(
           speed: live.speed,
           updatedAt: live.updatedAt,
         }
-      : validCoordinate(booking.currentLatitude, -90, 90) && validCoordinate(booking.currentLongitude, -180, 180)
+      : bookingFresh && validCoordinate(booking.currentLatitude, -90, 90) && validCoordinate(booking.currentLongitude, -180, 180)
         ? {
             latitude: booking.currentLatitude,
             longitude: booking.currentLongitude,
@@ -78,15 +77,7 @@ router.get(
           }
         : null;
 
-    return res.json({
-      success: true,
-      data: {
-        active: true,
-        status: booking.status,
-        destination,
-        worker,
-      },
-    });
+    return res.json({ success: true, data: { active: true, status: booking.status, destination, worker } });
   }),
 );
 
