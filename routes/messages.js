@@ -65,7 +65,7 @@ async function getAuthorizedBooking(req, bookingId) {
 }
 
 function otherParticipant(booking, role) {
-  if (role === "customer") return { id: booking.workerId, role: "worker", name: "Worker" };
+  if (role === "customer") return { id: booking.workerId, role: "worker", name: booking.workerName || "Worker" };
   return { id: booking.customerId, role: "customer", name: booking.customerName || "Customer" };
 }
 
@@ -99,6 +99,12 @@ router.get(
 
     if (!bookings.length) return res.json({ success: true, data: [] });
 
+    const workerIds = role === "customer" ? [...new Set(bookings.map((booking) => String(booking.workerId)).filter(Boolean))] : [];
+    const workers = workerIds.length
+      ? await Worker.find({ _id: { $in: workerIds }, isDeleted: { $ne: true } }).select("_id fullName").lean()
+      : [];
+    const workerNames = new Map(workers.map((worker) => [String(worker._id), worker.fullName || "Worker"]));
+
     const bookingIds = bookings.map((booking) => booking._id);
     const unread = await Message.aggregate([
       { $match: { bookingId: { $in: bookingIds }, recipientId: new mongoose.Types.ObjectId(req.user.id), readAt: null } },
@@ -118,11 +124,14 @@ router.get(
       data: bookings.map((booking) => {
         const last = latestMap.get(String(booking._id));
         const lastText = last ? decryptStoredMessage(last.text, last.encryptionVersion) : "";
+        const participant = role === "customer"
+          ? { id: booking.workerId, role: "worker", name: workerNames.get(String(booking.workerId)) || "Worker" }
+          : otherParticipant(booking, role);
         return {
           bookingId: String(booking._id),
           serviceTitle: booking.serviceTitle,
           status: booking.status,
-          participant: otherParticipant(booking, role),
+          participant,
           lastMessage: last ? { text: lastText, createdAt: last.createdAt, senderId: String(last.senderId) } : null,
           unreadCount: unreadMap.get(String(booking._id)) || 0,
         };
@@ -137,6 +146,10 @@ router.get(
   asyncHandler(async (req, res) => {
     const booking = await getAuthorizedBooking(req, req.params.bookingId);
     if (!booking) return res.status(404).json({ success: false, message: "Messaging is unavailable for this booking." });
+
+    const participant = req.user.role === "customer"
+      ? { id: booking.workerId, role: "worker", name: (await Worker.findOne({ _id: booking.workerId, isDeleted: { $ne: true } }).select("fullName").lean())?.fullName || "Worker" }
+      : otherParticipant(booking, req.user.role);
 
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || MAX_PAGE_SIZE, 1), MAX_PAGE_SIZE);
     const before = req.query.before;
@@ -156,7 +169,7 @@ router.get(
           id: String(booking._id),
           serviceTitle: booking.serviceTitle,
           status: booking.status,
-          participant: otherParticipant(booking, req.user.role),
+          participant,
         },
         messages: rows.map(publicMessage),
         hasMore: rows.length === limit,
@@ -180,6 +193,9 @@ router.post(
     }
 
     const recipient = otherParticipant(booking, req.user.role);
+    const senderName = req.user.role === "customer"
+      ? (booking.customerName || "Customer")
+      : ((await Worker.findOne({ _id: req.user.id, isDeleted: { $ne: true } }).select("fullName").lean())?.fullName || "Worker");
     const encryptedText = encryptMessage(text);
     const message = await Message.create({
       bookingId: booking._id,
@@ -195,6 +211,7 @@ router.post(
       ...publicMessage(message),
       bookingId: String(booking._id),
       senderId: String(message.senderId),
+      senderName,
       recipientId: String(message.recipientId),
     };
 
@@ -204,7 +221,7 @@ router.post(
       senderId: req.user.id,
       relatedEntityId: booking._id,
       link: "#messages",
-      title: "New message",
+      title: `${senderName} sent you a message`,
       message: text.length > 100 ? `${text.slice(0, 100)}…` : text,
       type: "message",
     });
@@ -214,6 +231,8 @@ router.post(
       title: notification.title,
       message: notification.message,
       type: notification.type,
+      senderId: String(req.user.id),
+      senderName,
       relatedEntityId: String(booking._id),
       bookingId: String(booking._id),
       link: notification.link,
@@ -228,8 +247,8 @@ router.post(
         recipient.id,
         recipient.role,
         {
-          title: "New message",
-          message: `${recipient.name || "You have a new message"}: ${notification.message}`,
+          title: `${senderName} sent you a message`,
+          message: notification.message,
           type: "message",
           tag: `message-${booking._id}`,
           url: "/",
