@@ -12,6 +12,13 @@ function isEnvSuperAdminUser(user) {
   return isEnvSuperAdminToken(user);
 }
 
+// PushSubscription stores the canonical delivery role. The notification system
+// uses "admin" for both normal admins and super admins, so normalize JWT roles
+// before reading/writing subscriptions and device preferences.
+function getPushRole(user) {
+  return user?.role === "super_admin" ? "admin" : user?.role;
+}
+
 const router = express.Router();
 
 router.get(
@@ -24,12 +31,9 @@ router.get(
         data: { devicePushEnabled: true },
       });
     }
-    const Model =
-      req.user.role === "admin"
-        ? Admin
-        : req.user.role === "worker"
-          ? Worker
-          : Customer;
+
+    const role = getPushRole(req.user);
+    const Model = role === "admin" ? Admin : role === "worker" ? Worker : Customer;
     const doc = await Model.findById(req.user.id).select("devicePushEnabled");
     if (!doc) {
       return res.status(404).json({ success: false, message: "Account not found." });
@@ -57,10 +61,6 @@ router.patch(
       if (!devicePushEnabled) {
         await PushSubscription.deleteMany({
           userId: ENV_SUPER_ADMIN_ID,
-          userRole: "super_admin",
-        });
-        await PushSubscription.deleteMany({
-          userId: ENV_SUPER_ADMIN_ID,
           userRole: "admin",
         });
       }
@@ -73,12 +73,8 @@ router.patch(
       });
     }
 
-    const Model =
-      req.user.role === "admin"
-        ? Admin
-        : req.user.role === "worker"
-          ? Worker
-          : Customer;
+    const role = getPushRole(req.user);
+    const Model = role === "admin" ? Admin : role === "worker" ? Worker : Customer;
     const doc = await Model.findByIdAndUpdate(
       req.user.id,
       { devicePushEnabled },
@@ -92,7 +88,7 @@ router.patch(
     if (!devicePushEnabled) {
       await PushSubscription.deleteMany({
         userId: req.user.id,
-        userRole: req.user.role,
+        userRole: role,
       });
     }
 
@@ -129,11 +125,16 @@ router.post(
       });
     }
 
+    const role = getPushRole(req.user);
+    if (!["admin", "worker", "customer"].includes(role)) {
+      return res.status(403).json({ success: false, message: "Push notifications are not available for this account." });
+    }
+
     await PushSubscription.findOneAndUpdate(
       { endpoint: subscription.endpoint },
       {
         userId: req.user.id,
-        userRole: req.user.role,
+        userRole: role,
         endpoint: subscription.endpoint,
         keys: {
           p256dh: subscription.keys.p256dh,
@@ -153,7 +154,8 @@ router.delete(
   requireAuth,
   asyncHandler(async (req, res) => {
     const endpoint = req.body?.endpoint;
-    const query = { userId: req.user.id, userRole: req.user.role };
+    const role = getPushRole(req.user);
+    const query = { userId: req.user.id, userRole: role };
     if (endpoint) query.endpoint = endpoint;
     await PushSubscription.deleteMany(query);
     return res.json({ success: true, message: "Push subscription removed." });
