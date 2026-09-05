@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import RefreshToken from "../models/RefreshToken.js";
 import Worker from "../workerSchema.js";
+import Admin from "../models/Admin.js";
 import env from "./env.js";
 import logger from "./logger.js";
 import { JWT_CONFIG } from "./constants.js";
@@ -50,17 +51,6 @@ export const verifyRefreshToken = async (token) => {
   if (record.userRole === "worker") {
     const worker = await Worker.findById(record.userId).select("isDeleted isDisabled emailVerified status approvalStatus");
 
-    // Older approved workers may have status=active while approvalStatus was
-    // left at pending_approval by the legacy admin endpoint. Under the current
-    // invariant, active means approved, so repair that legacy state atomically.
-    if (worker && worker.status === "active" && worker.approvalStatus === "pending_approval") {
-      await Worker.updateOne(
-        { _id: worker._id, status: "active", approvalStatus: "pending_approval" },
-        { $set: { approvalStatus: "approved" } },
-      );
-      worker.approvalStatus = "approved";
-    }
-
     const canRefresh = Boolean(
       worker &&
         worker.isDeleted !== true &&
@@ -76,6 +66,20 @@ export const verifyRefreshToken = async (token) => {
         { isRevoked: true, revokedAt: new Date() },
       );
       throw new Error("Worker account is no longer eligible for token refresh");
+    }
+  }
+
+  if (record.userRole === "admin" || record.userRole === "super_admin") {
+    const admin = await Admin.findById(record.userId).select("role isActive");
+    const roleMatches = admin && admin.role === record.userRole;
+    const isActive = admin && (admin.role === "super_admin" || Admin.isAccountActive(admin));
+
+    if (!roleMatches || !isActive) {
+      await RefreshToken.updateOne(
+        { _id: record._id, isRevoked: false },
+        { isRevoked: true, revokedAt: new Date() },
+      );
+      throw new Error("Admin account is no longer eligible for token refresh");
     }
   }
 
