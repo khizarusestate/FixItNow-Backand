@@ -1,35 +1,25 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import RefreshToken from "../models/RefreshToken.js";
+import Worker from "../workerSchema.js";
 import env from "./env.js";
 import logger from "./logger.js";
 import { JWT_CONFIG } from "./constants.js";
 
 const JWT_SECRET = env.JWT_SECRET;
 
-// Validate JWT_SECRET on startup
 if (JWT_SECRET.length < 32) {
   if (env.NODE_ENV === "production") {
-    logger.error(
-      "JWT_SECRET is too short. Must be at least 32 characters for production security.",
-    );
+    logger.error("JWT_SECRET is too short. Must be at least 32 characters for production security.");
     throw new Error("JWT_SECRET must be at least 32 characters in production");
   } else {
-    logger.warn(
-      "JWT_SECRET is too short for production security. Using a weak secret in development.",
-    );
+    logger.warn("JWT_SECRET is too short for production security. Using a weak secret in development.");
   }
 }
 
-// ─── Access Token (short-lived) ───────────────────────────────────────────────
-
 export const createAccessToken = (payload) => {
-  if (!payload || typeof payload !== "object") {
-    throw new Error("Invalid payload for access token");
-  }
-  if (!payload.id || !payload.role) {
-    throw new Error("Payload must contain id and role");
-  }
+  if (!payload || typeof payload !== "object") throw new Error("Invalid payload for access token");
+  if (!payload.id || !payload.role) throw new Error("Payload must contain id and role");
   const tokenPayload = {
     id: payload.id,
     role: payload.role,
@@ -44,9 +34,7 @@ export const createAccessToken = (payload) => {
 };
 
 export const createToken = (payload) => {
-  if (!payload || typeof payload !== "object") {
-    throw new Error("Invalid payload for token");
-  }
+  if (!payload || typeof payload !== "object") throw new Error("Invalid payload for token");
   if (env.USE_REFRESH_TOKENS) return createAccessToken(payload);
   const tokenPayload = {
     id: payload.id,
@@ -61,21 +49,11 @@ export const createToken = (payload) => {
   });
 };
 
-export const createRefreshToken = async (
-  userId,
-  userRole,
-  req = null,
-  expiryDays = null,
-) => {
-  if (!userId || !userRole) {
-    throw new Error("userId and userRole are required for refresh token");
-  }
+export const createRefreshToken = async (userId, userRole, req = null, expiryDays = null) => {
+  if (!userId || !userRole) throw new Error("userId and userRole are required for refresh token");
   const token = RefreshToken.generateToken();
   const expiresAt = new Date();
-  const days =
-    typeof expiryDays === "number" && expiryDays > 0
-      ? expiryDays
-      : env.REFRESH_TOKEN_EXPIRY_DAYS;
+  const days = typeof expiryDays === "number" && expiryDays > 0 ? expiryDays : env.REFRESH_TOKEN_EXPIRY_DAYS;
   expiresAt.setDate(expiresAt.getDate() + days);
   await RefreshToken.create({
     token,
@@ -89,12 +67,35 @@ export const createRefreshToken = async (
 };
 
 export const verifyRefreshToken = async (token) => {
-  if (!token || typeof token !== "string") {
-    throw new Error("Invalid refresh token format");
-  }
+  if (!token || typeof token !== "string") throw new Error("Invalid refresh token format");
   const record = await RefreshToken.findOne({ token, isRevoked: false });
   if (!record) throw new Error("Invalid or revoked refresh token");
   if (record.expiresAt < new Date()) throw new Error("Refresh token expired");
+
+  // A refresh token must not restore access after a worker is suspended,
+  // disabled, rejected, deleted, or otherwise no longer approved/active.
+  if (record.userRole === "worker") {
+    const worker = await Worker.findById(record.userId).select(
+      "isDeleted isDisabled emailVerified status approvalStatus",
+    );
+    const canRefresh = Boolean(
+      worker &&
+        worker.isDeleted !== true &&
+        worker.isDisabled !== true &&
+        worker.emailVerified === true &&
+        worker.status === "active" &&
+        worker.approvalStatus === "approved",
+    );
+
+    if (!canRefresh) {
+      await RefreshToken.updateOne(
+        { _id: record._id, isRevoked: false },
+        { isRevoked: true, revokedAt: new Date() },
+      );
+      throw new Error("Worker account is no longer eligible for token refresh");
+    }
+  }
+
   return record;
 };
 
@@ -104,9 +105,7 @@ export const revokeRefreshToken = async (token) => {
     { token },
     { isRevoked: true, revokedAt: new Date() },
   );
-  if (result.matchedCount === 0) {
-    logger.warn("Attempted to revoke non-existent refresh token");
-  }
+  if (result.matchedCount === 0) logger.warn("Attempted to revoke non-existent refresh token");
 };
 
 export const revokeAllUserRefreshTokens = async (userId, userRole) => {
@@ -115,25 +114,16 @@ export const revokeAllUserRefreshTokens = async (userId, userRole) => {
     { userId, userRole, isRevoked: false },
     { isRevoked: true, revokedAt: new Date() },
   );
-  logger.info(`Revoked ${result.modifiedCount} refresh tokens for user`, {
-    userId,
-    userRole,
-  });
+  logger.info(`Revoked ${result.modifiedCount} refresh tokens for user`, { userId, userRole });
 };
 
-// ─── Verification ─────────────────────────────────────────────────────────────
-
 export const verifyToken = (token) => {
-  if (!token || typeof token !== "string") {
-    throw new Error("Invalid token format");
-  }
+  if (!token || typeof token !== "string") throw new Error("Invalid token format");
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
     if (!decoded.id || !decoded.role) throw new Error("Invalid token structure");
     return decoded;
   } catch (error) {
-    // Keep the standard JWT error names so auth middleware can correctly
-    // identify an expired access token and let the refresh flow handle it.
     if (error.name === "TokenExpiredError") {
       const normalized = new Error("Token expired");
       normalized.name = "TokenExpiredError";
@@ -177,9 +167,7 @@ export const isTokenExpired = (token) => {
 export const validateTokenStructure = (decoded) => {
   if (!decoded || typeof decoded !== "object") return false;
   const requiredFields = ["id", "role", "iat", "exp"];
-  for (const field of requiredFields) {
-    if (!decoded[field]) return false;
-  }
+  for (const field of requiredFields) if (!decoded[field]) return false;
   return true;
 };
 
