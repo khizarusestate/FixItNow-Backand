@@ -41,7 +41,6 @@ const workerSchema = new mongoose.Schema({
       trim: true,
     },
   ],
-  // New: Array of service IDs for multiple service selection
   services: [
     {
       serviceId: {
@@ -92,7 +91,6 @@ const workerSchema = new mongoose.Schema({
     trim: true,
   },
   ...geoLocationSchemaFields,
-  /** @deprecated Use location — kept for legacy data / queries */
   serviceArea: {
     type: String,
     default: "",
@@ -120,17 +118,14 @@ const workerSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-  /** Passport-style photo for admin verification only (not profile). */
   verificationPhoto: {
     type: String,
     default: null,
   },
-  /** CNIC front image for admin identity verification. */
   cnicFrontPhoto: {
     type: String,
     default: null,
   },
-  /** CNIC back image for admin identity verification. */
   cnicBackPhoto: {
     type: String,
     default: null,
@@ -139,7 +134,6 @@ const workerSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
-  /** basic_complete = step1 done; complete = step2 professional details submitted */
   rating: {
     type: Number,
     default: 0,
@@ -170,48 +164,47 @@ const workerSchema = new mongoose.Schema({
     type: String,
     default: "inactive",
     enum: [
-      "inactive",      // Cannot login until approved
-      "active",        // Approved by admin, can login
-      "suspended",     // Suspended by admin
-      "rejected",      // Rejected by admin
+      "inactive",
+      "active",
+      "suspended",
+      "rejected",
     ],
   },
   approvalStatus: {
     type: String,
     default: "pending_approval",
     enum: [
-      "pending_approval",   // Waiting for admin review
-      "approved",           // Admin approved - can login
-      "rejected",           // Admin rejected
+      "pending_approval",
+      "approved",
+      "rejected",
     ],
   },
   approvedAt: {
     type: Date,
     default: null,
-    description: 'When admin approved the worker account'
+    description: "When admin approved the worker account",
   },
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Admin',
+    ref: "Admin",
     default: null,
-    description: 'Which admin approved this worker'
+    description: "Which admin approved this worker",
   },
   rejectionReason: {
     type: String,
-    default: '',
-    description: 'Reason if worker account was rejected'
+    default: "",
+    description: "Reason if worker account was rejected",
   },
   signupStep: {
     type: String,
     enum: ["complete"],
     default: "complete",
-    description: 'Single-step signup - always complete after initial registration'
+    description: "Single-step signup - always complete after initial registration",
   },
   availability: {
     type: Boolean,
     default: true,
   },
-  /** When false, web push (device) is not sent until user opts in. */
   devicePushEnabled: {
     type: Boolean,
     default: false,
@@ -224,8 +217,6 @@ const workerSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-  // REMOVED: paymentMethod, accountUsername, accountNumber
-  // These are now in WorkerPayment collection for security
   totalEarnings: {
     type: Number,
     default: 0,
@@ -252,23 +243,81 @@ const workerSchema = new mongoose.Schema({
   },
 });
 
-// Update the updatedAt field before saving
+// Keep the two worker lifecycle fields synchronized when a document is saved.
+// approvalStatus is the admin decision; status is the current operational state.
+// This also repairs the legacy approval endpoint, which historically only set
+// status="active" and left approvalStatus="pending_approval".
 workerSchema.pre("save", async function (next) {
   this.updatedAt = Date.now();
+
+  if (this.isModified("status")) {
+    if (this.status === "active" && this.approvalStatus === "pending_approval") {
+      this.approvalStatus = "approved";
+    } else if (this.status === "rejected") {
+      this.approvalStatus = "rejected";
+    }
+  }
+
+  if (this.isModified("approvalStatus")) {
+    if (this.approvalStatus === "approved" && this.status === "inactive") {
+      this.status = "active";
+    } else if (this.approvalStatus === "rejected") {
+      this.status = "rejected";
+    }
+  }
+
   if (this.isModified("cnicNumber") && this.cnicNumber) {
     const digits = String(this.cnicNumber).replace(/\D/g, "");
     if (digits.length === 13) {
       this.cnicNumber = digits;
     }
   }
+
   const label = (this.location || this.serviceArea || "").trim();
   if (label) {
     this.location = label;
     this.serviceArea = label;
   }
+
   if (this.isModified("password")) {
     this.password = await bcrypt.hash(this.password, 12);
   }
+
+  next();
+});
+
+// findOneAndUpdate/updateOne do not execute save middleware. Normalize lifecycle
+// fields here as well so admin status/approval updates cannot create contradictory
+// worker states.
+workerSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function (next) {
+  const update = this.getUpdate() || {};
+  const $set = { ...(update.$set || {}) };
+
+  if ($set.status === "active" || update.status === "active") {
+    $set.status = "active";
+    $set.approvalStatus = "approved";
+  }
+
+  if ($set.status === "rejected" || update.status === "rejected") {
+    $set.status = "rejected";
+    $set.approvalStatus = "rejected";
+  }
+
+  if ($set.approvalStatus === "approved" || update.approvalStatus === "approved") {
+    $set.approvalStatus = "approved";
+    $set.status = "active";
+  }
+
+  if ($set.approvalStatus === "rejected" || update.approvalStatus === "rejected") {
+    $set.approvalStatus = "rejected";
+    $set.status = "rejected";
+  }
+
+  if (Object.keys($set).length > 0) {
+    update.$set = $set;
+  }
+
+  this.setUpdate(update);
   next();
 });
 
@@ -276,7 +325,6 @@ workerSchema.methods.comparePassword = function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Create indexes for faster queries (only for non-unique fields)
 workerSchema.index({ primaryServiceCategory: 1 });
 workerSchema.index({ primaryServiceName: 1 });
 workerSchema.index({ primaryServiceId: 1 });
