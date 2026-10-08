@@ -441,7 +441,7 @@ router.delete(
 
     const isOwningWorker = req.worker && advertisement.workerId?.toString() === req.worker.id?.toString();
     const isOwningCustomer = req.customer && advertisement.customerId?.toString() === req.customer.id?.toString();
-    const isAdmin = Boolean(req.admin);
+    const isAdmin = Boolean(req.admin || req.super_admin);
 
     if (!isOwningWorker && !isOwningCustomer && !isAdmin) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this advertisement.' });
