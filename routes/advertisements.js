@@ -51,7 +51,7 @@ const adStorage = multer.diskStorage({
 
 const adUpload = multer({
   storage: adStorage,
-  limits: { fileSize: 30 * 1024 * 1024, files: 4 },
+  limits: { fileSize: 100 * 1024 * 1024, files: 4 },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'paymentReceipt') {
       if (!IMAGE_MIME_TYPES.has(file.mimetype)) {
@@ -149,7 +149,10 @@ router.post(
       }
       if (!pricing) throw new Error('Invalid advertisement duration.');
       if (!['image', 'video'].includes(adType)) throw new Error('Invalid advertisement type.');
-      if (!adFiles.length || adFiles.length > 3) throw new Error('Upload between 1 and 3 advertisement files.');
+      const maxAdFiles = adType === 'video' ? 1 : 3;
+      if (!adFiles.length || adFiles.length > maxAdFiles) {
+        throw new Error(adType === 'video' ? 'Only 1 video can be uploaded.' : 'Upload between 1 and 3 advertisement images.');
+      }
       if (!PAYMENT_METHODS.has(paymentMethod)) throw new Error('Invalid payment method.');
       if (paymentReference.trim().length > 100) throw new Error('Payment reference must be 100 characters or fewer.');
 
@@ -186,6 +189,12 @@ router.post(
       }
 
       for (const file of adFiles) {
+        if (adType === 'video' && file.size > 100 * 1024 * 1024) {
+          throw new Error('Advertisement video must be 100MB or smaller.');
+        }
+        if (adType === 'image' && file.size > 2 * 1024 * 1024) {
+          throw new Error('Advertisement images must be 2MB or smaller.');
+        }
         if (!expectedMedia.has(file.mimetype)) {
           throw new Error(`All advertisement files must be ${adType} files.`);
         }
