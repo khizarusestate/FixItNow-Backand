@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import timeout from 'connect-timeout';
 import fs from 'fs';
 import path from 'path';
 import { requireWorker, requireCustomer, requireAdmin, optionalAuth } from '../middleware/auth.js';
@@ -10,6 +11,7 @@ import { buildConvertedVideoFilename, convertVideoToBrowserMp4 } from '../servic
 import Advertisement from '../models/Advertisement.js';
 
 const router = Router();
+const advertisementUploadTimeout = timeout('15m');
 
 const DURATION_PRICING = Object.freeze({
   '24 hours': { price: 200, ms: 24 * 60 * 60 * 1000 },
@@ -140,6 +142,7 @@ const normalizeAd = (ad) => {
 // ─── POST /api/advertisements — guest, customer, or worker
 router.post(
   '/',
+  advertisementUploadTimeout,
   optionalAuth,
   uploadFields,
   asyncHandler(async (req, res) => {
