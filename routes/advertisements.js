@@ -6,6 +6,7 @@ import { requireWorker, requireCustomer, requireAdmin, optionalAuth } from '../m
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { validateFile, generateSecureFilename } from '../utils/fileValidation.js';
 import { uploadsSubdir } from '../utils/uploadPaths.js';
+import { buildConvertedVideoFilename, convertVideoToBrowserMp4 } from '../services/videoConversion.js';
 import Advertisement from '../models/Advertisement.js';
 
 const router = Router();
@@ -33,6 +34,14 @@ const VIDEO_MIME_TYPES = new Set([
   'video/mp4',
   'video/webm',
   'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/mpeg',
+  'video/3gpp',
+  'video/ogg',
+  'video/x-flv',
+  'video/x-ms-wmv',
+  'video/x-m4v',
 ]);
 
 const PAYMENT_METHODS = new Set(['jazzcash', 'bank-transfer', 'pay-after-work']);
@@ -65,7 +74,7 @@ const adUpload = multer({
     }
 
     if (!IMAGE_MIME_TYPES.has(file.mimetype) && !VIDEO_MIME_TYPES.has(file.mimetype)) {
-      return cb(new Error('Unsupported advertisement media type.'));
+      return cb(new Error('Unsupported advertisement media type. Please upload a supported image or video file.'));
     }
 
     cb(null, true);
@@ -137,6 +146,7 @@ router.post(
     const uploaded = flattenUploadedFiles(req.files);
     const adFiles = req.files?.adFiles || [];
     const receipt = req.files?.paymentReceipt?.[0] || null;
+    const generatedVideoFiles = [];
 
     try {
       const { purpose, duration, adType, paymentMethod, paymentReference = '' } = req.body;
@@ -202,7 +212,30 @@ router.post(
       }
       if (receipt) await validateFile(receipt.path, receipt.originalname, receipt.mimetype);
 
-      const adFileUrls = adFiles.map((file) => `/uploads/advertisements/${file.filename}`);
+      let adFileUrls;
+
+      if (adType === 'video') {
+        const convertedFile = adFiles[0];
+        const convertedFilename = buildConvertedVideoFilename(
+          convertedFile.originalname,
+          submitter.id,
+        );
+        const convertedPath = path.join(
+          uploadsSubdir('advertisements'),
+          convertedFilename,
+        );
+
+        await convertVideoToBrowserMp4(convertedFile.path, convertedPath);
+        generatedVideoFiles.push({ path: convertedPath });
+
+        adFileUrls = [`/uploads/advertisements/${convertedFilename}`];
+
+        // The original upload has served its purpose; keep only the browser-compatible MP4.
+        cleanupUploadedFiles([convertedFile]);
+      } else {
+        adFileUrls = adFiles.map((file) => `/uploads/advertisements/${file.filename}`);
+      }
+
       const paymentReceiptUrl = receipt
         ? `/uploads/advertisements/${receipt.filename}`
         : '';
@@ -248,7 +281,7 @@ router.post(
         data: normalizeAd(advertisement),
       });
     } catch (error) {
-      cleanupUploadedFiles(uploaded);
+      cleanupUploadedFiles([...uploaded, ...generatedVideoFiles]);
       const status = error?.name === 'ValidationError' ? 400 : 400;
       return res.status(status).json({ success: false, message: error.message || 'Advertisement submission failed.' });
     }
