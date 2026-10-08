@@ -17,6 +17,14 @@ const MAGIC_BYTES = {
   "video/mp4": [0x00, 0x00, 0x00, null, 0x66, 0x74, 0x79, 0x70],
   "video/webm": [0x1a, 0x45, 0xdf, 0xa3],
   "video/quicktime": [0x00, 0x00, 0x00, null, 0x66, 0x74, 0x79, 0x70],
+  "video/x-msvideo": null,
+  "video/x-matroska": null,
+  "video/mpeg": null,
+  "video/3gpp": null,
+  "video/ogg": null,
+  "video/x-flv": null,
+  "video/x-ms-wmv": null,
+  "video/x-m4v": null,
   "application/pdf": [0x25, 0x50, 0x44, 0x46],
 };
 
@@ -33,6 +41,14 @@ const ALLOWED_MIME_TYPES = new Set([
   "video/mp4",
   "video/webm",
   "video/quicktime",
+  "video/x-msvideo",
+  "video/x-matroska",
+  "video/mpeg",
+  "video/3gpp",
+  "video/ogg",
+  "video/x-flv",
+  "video/x-ms-wmv",
+  "video/x-m4v",
   "application/pdf",
 ]);
 
@@ -50,6 +66,15 @@ const ALLOWED_EXTENSIONS = new Set([
   ".mp4",
   ".webm",
   ".mov",
+  ".avi",
+  ".mkv",
+  ".mpeg",
+  ".mpg",
+  ".3gp",
+  ".ogv",
+  ".flv",
+  ".wmv",
+  ".m4v",
   ".pdf",
 ]);
 
@@ -67,6 +92,15 @@ const EXT_TO_MIME = {
   ".mp4": "video/mp4",
   ".webm": "video/webm",
   ".mov": "video/quicktime",
+  ".avi": "video/x-msvideo",
+  ".mkv": "video/x-matroska",
+  ".mpeg": "video/mpeg",
+  ".mpg": "video/mpeg",
+  ".3gp": "video/3gpp",
+  ".ogv": "video/ogg",
+  ".flv": "video/x-flv",
+  ".wmv": "video/x-ms-wmv",
+  ".m4v": "video/x-m4v",
   ".pdf": "application/pdf",
 };
 
