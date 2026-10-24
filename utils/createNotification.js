@@ -38,7 +38,9 @@ async function getNotificationDeliveryPreferences(userId, userRole, type) {
     return { inAppEnabled: prefs?.inAppEnabled !== false, pushEnabled: prefs?.pushEnabled !== false && devicePushEnabled, typeEnabled };
   } catch (err) {
     logger.warn("Notification preference lookup failed", { userId, userRole, type, error: err?.message });
-    return { inAppEnabled: true, pushEnabled: true, typeEnabled: true };
+    // Preserve in-app delivery, but fail closed for web push when preferences
+    // cannot be verified. This avoids sending push against a user's opt-out.
+    return { inAppEnabled: true, pushEnabled: false, typeEnabled: true };
   }
 }
 
