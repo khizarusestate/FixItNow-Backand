@@ -1684,151 +1684,16 @@ router.delete(
 );
 
 // ─── DELETE /api/auth/worker/delete-account ─────────────────────────────────────
+// Worker accounts cannot be deleted through self-service. Keep the endpoint
+// protected as well as hiding the frontend control, so direct API calls are denied.
 router.delete(
   "/worker/delete-account",
   requireWorker,
   asyncHandler(async (req, res) => {
-    const workerId = req.worker.id;
-
-    const worker = await Worker.findOne({
-      _id: workerId,
-      isDeleted: { $ne: true },
-    });
-
-    if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Worker account not found.",
-      });
-    }
-
-    // Worker cannot disappear while holding/claiming active jobs.
-    const activeBookingCount = await Booking.countDocuments({
-      isDeleted: false,
-      status: { $nin: ["completed", "cancelled", "rejected"] },
-      $or: [
-        { workerId },
-        { claimWorkerId: workerId },
-      ],
-    });
-
-    if (activeBookingCount > 0) {
-      return res.status(409).json({
-        success: false,
-        code: "ACTIVE_JOBS_EXIST",
-        message:
-          "You cannot delete your account while you have active or claimed jobs. Complete or release them first.",
-        activeJobs: activeBookingCount,
-      });
-    }
-
-    try {
-      await revokeAllUserRefreshTokens(workerId, "worker");
-    } catch (err) {
-      logger.warn("Failed to revoke worker refresh tokens on deletion", {
-        error: err.message,
-        workerId,
-      });
-    }
-
-    await Promise.all([
-      Notification.deleteMany({ userId: workerId }),
-      PushSubscription.deleteMany({
-        userId: workerId,
-        userRole: "worker",
-      }),
-      Advertisement.deleteMany({ workerId }),
-    ]);
-
-    // Remove all private worker verification/profile images.
-    for (const imageField of [
-      "profilePicture",
-      "verificationPhoto",
-      "cnicFrontPhoto",
-      "cnicBackPhoto",
-    ]) {
-      const imagePath = worker[imageField];
-
-      if (!imagePath) continue;
-
-      const absolutePath = path.join(__dirname, "..", imagePath);
-
-      if (fs.existsSync(absolutePath)) {
-        try {
-          fs.unlinkSync(absolutePath);
-        } catch (err) {
-          logger.warn("Failed to remove worker image", {
-            error: err.message,
-            workerId,
-            imageField,
-          });
-        }
-      }
-    }
-
-    const originalName = worker.fullName;
-    const originalEmail = worker.email;
-
-    // Preserve historical bookings/reviews while removing personal identity.
-    worker.fullName = "Deleted Worker";
-    worker.firstName = "";
-    worker.lastName = "";
-    worker.email = `deleted-worker-${workerId}@deleted.fixitnow.invalid`;
-    worker.phoneNumber = "";
-    worker.location = "";
-    worker.serviceArea = "";
-    worker.latitude = null;
-    worker.longitude = null;
-    worker.placeId = "";
-    worker.profilePicture = null;
-    worker.verificationPhoto = null;
-    worker.cnicFrontPhoto = null;
-    worker.cnicBackPhoto = null;
-    worker.password =
-      `deleted-${workerId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    worker.emailVerified = false;
-    worker.devicePushEnabled = false;
-    worker.availability = false;
-    worker.status = "inactive";
-    worker.isDisabled = true;
-    worker.isDeleted = true;
-    worker.deletedAt = new Date();
-    worker.emailVerificationCode = null;
-    worker.emailVerificationExpiresAt = null;
-    worker.passwordResetCode = null;
-    worker.passwordResetExpiresAt = null;
-
-    await worker.save();
-
-    emitNotification(
-      "workers",
-      "deleted",
-      `Worker account deleted: ${originalName}`,
-    );
-    emitRefresh("workers");
-
-    await logAudit(
-      {
-        admin: { id: workerId, email: originalEmail },
-        user: { id: workerId },
-      },
-      "worker_self_delete",
-      "worker",
-      workerId,
-      {
-        fullName: originalName,
-        email: originalEmail,
-        permanentIdentityRemoval: true,
-        transactionalHistoryPreserved: true,
-      },
-    );
-
-    clearAuthCookies(res);
-
-    return res.json({
-      success: true,
-      message:
-        "Your account has been deleted and personal information removed. Job history was preserved for platform records.",
+    return res.status(403).json({
+      success: false,
+      code: "WORKER_SELF_DELETE_DISABLED",
+      message: "Worker accounts cannot be deleted directly. Please contact FixItNow support for assistance.",
     });
   }),
 );
