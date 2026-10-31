@@ -403,12 +403,12 @@ router.post(
       }
 
       if (
-        !email ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        email &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())
       ) {
         return res.status(400).json({
           success: false,
-          message: 'Valid email address is required',
+          message: 'Enter a valid email address or leave it blank.',
         });
       }
 
