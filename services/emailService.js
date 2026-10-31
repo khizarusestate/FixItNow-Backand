@@ -96,6 +96,41 @@ export const emailService = {
     );
   },
 
+  /** Booking confirmation email. Excludes address, phone, notes, and payment data. */
+  async sendBookingConfirmed(booking) {
+    const to = String(booking?.email || booking?.customerId?.email || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return { success: false, skipped: true, error: "No valid customer email available" };
+    }
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[char]);
+    const reference = String(booking?._id || "").slice(-8).toUpperCase();
+    const serviceTitle = escapeHtml(booking?.serviceTitle || "your requested service");
+    const customerName = escapeHtml(booking?.customerName || "there");
+    const confirmedAt = booking?.assignedAt || booking?.updatedAt || new Date();
+    const confirmationDate = new Date(confirmedAt).toLocaleString("en-PK", {
+      dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi",
+    });
+    const html = `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#172033;max-width:600px;margin:auto">
+        <h2 style="color:#0B1F3A">Your booking is confirmed</h2>
+        <p>Hi ${customerName},</p>
+        <p>Good news — your Fix It Now booking has been confirmed and a worker has been assigned.</p>
+        <div style="background:#f5f7fa;border-radius:10px;padding:16px;margin:20px 0">
+          <p style="margin:0 0 8px"><strong>Booking reference:</strong> #${escapeHtml(reference)}</p>
+          <p style="margin:0 0 8px"><strong>Service:</strong> ${serviceTitle}</p>
+          <p style="margin:0 0 8px"><strong>Status:</strong> Confirmed</p>
+          <p style="margin:0"><strong>Confirmed on:</strong> ${escapeHtml(confirmationDate)} (Pakistan time)</p>
+        </div>
+        <p>Keep your booking reference for any questions. You can check the latest progress in Fix It Now.</p>
+        <p>If you did not request this booking or need help, please contact Fix It Now support.</p>
+        <p>Thank you for choosing Fix It Now.</p>
+      </div>
+    `;
+    return sendPlainEmail(to, `Fix It Now — booking confirmed (#${reference})`, html);
+  },
+
   /** Worker account rejected by admin */
   async sendWorkerRejection(worker, reason) {
     const html = `
