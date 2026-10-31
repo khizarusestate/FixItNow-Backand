@@ -742,6 +742,9 @@ router.patch(
       note: `Commission verified. Worker assigned: ${worker?.fullName || booking.claimWorkerId}`,
     });
     await booking.save();
+    emailService.sendBookingConfirmed(booking).catch((error) => {
+      logger.warn("Booking confirmation email failed", { bookingId: String(booking._id), error: error.message });
+    });
 
     if (booking.workerId) {
       await Worker.findByIdAndUpdate(booking.workerId, {
@@ -768,6 +771,9 @@ router.patch(
       notifyCustomerWorkerAssigned(booking.customerId, booking, worker).catch(() => {});
     }
 
+    emailService.sendBookingConfirmed(booking).catch((error) => {
+      logger.warn("Booking confirmation email failed", { bookingId: String(booking._id), error: error.message });
+    });
     emitRefresh('bookings');
     cacheDelByPrefix('fixitnow:admin:summary').catch(() => {});
 
@@ -818,6 +824,12 @@ router.patch('/bookings/:id/status', requireAdmin, asyncHandler(async (req, res)
     note: `Admin updated status to: ${status}`
   });
   await booking.save();
+
+  if (status === 'worker-assigned' && previousStatus !== 'worker-assigned') {
+    emailService.sendBookingConfirmed(booking).catch((error) => {
+      logger.warn("Booking confirmation email failed", { bookingId: String(booking._id), error: error.message });
+    });
+  }
 
   emitRefresh('bookings');
   cacheDelByPrefix('fixitnow:admin:summary').catch(() => {});
@@ -1078,6 +1090,10 @@ router.patch('/bookings/:id/assign', requireAdmin, asyncHandler(async (req, res)
   if (!updatedBooking) {
     return res.status(404).json({ success: false, message: 'Booking not found.' });
   }
+
+  emailService.sendBookingConfirmed(updatedBooking).catch((error) => {
+    logger.warn("Booking confirmation email failed", { bookingId: String(updatedBooking._id), error: error.message });
+  });
 
   // Update worker stats
   await Worker.findByIdAndUpdate(workerId, {
@@ -2004,6 +2020,10 @@ router.patch('/bookings/:id/auto-assign', requireAdmin, asyncHandler(async (req,
     $inc: { totalJobs: 1, assignedJobs: 1 },
     status: 'active',
     lastActive: new Date(),
+  });
+
+  emailService.sendBookingConfirmed(updatedBooking).catch((error) => {
+    logger.warn("Booking confirmation email failed", { bookingId: String(updatedBooking._id), error: error.message });
   });
 
   emitToUser(String(best._id), 'new-job', {
